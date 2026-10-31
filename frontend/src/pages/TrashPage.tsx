@@ -93,18 +93,19 @@ export function TrashPage() {
     setLoading(true)
     setMessage('')
     try {
-      await apiFetch('/files/batch/permanent', {
+      const result = await apiFetch<{ deleted: number; failed: Array<{ fileId: string; message: string }> }>('/files/batch/permanent', {
         method: 'DELETE',
         body: JSON.stringify({ fileIds: ids })
       })
-      setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
+      const failedIds = new Set(result.failed.map((file) => file.fileId))
+      setFiles((prev) => prev.filter((f) => !ids.includes(f.id) || failedIds.has(f.id)))
       setSelectedIds((prev) => {
         const next = new Set(prev)
-        ids.forEach((id) => next.delete(id))
+        ids.filter((id) => !failedIds.has(id)).forEach((id) => next.delete(id))
         return next
       })
-      setMessage(`${ids.length} arquivo(s) excluído(s) permanentemente.`)
-      setMessageType('success')
+      setMessage(result.failed.length ? `${result.deleted} arquivo(s) excluído(s); ${result.failed.length} falharam. Tente novamente.` : `${result.deleted} arquivo(s) excluído(s) permanentemente.`)
+      setMessageType(result.failed.length ? 'error' : 'success')
       window.dispatchEvent(new Event('9drive:storage-changed'))
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to permanently delete files')

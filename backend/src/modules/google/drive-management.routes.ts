@@ -22,8 +22,40 @@ driveManagementRouter.get('/trash', async (req: AuthRequest, res, next) => {
   try {
     const { pageToken } = z.object({ pageToken: z.string().min(1).max(2048).optional() }).parse(req.query)
     const drive = await accountDrive(req)
-    const result = await drive.files.list({ q: 'trashed = true', fields: 'nextPageToken,files(id,name,mimeType,size,trashedTime,explicitlyTrashed,capabilities(canTrash,canEdit))', pageSize: 100, pageToken, supportsAllDrives: true, includeItemsFromAllDrives: true })
+    const result = await drive.files.list({ q: 'trashed = true', fields: 'nextPageToken,files(id,name,mimeType,size,trashedTime,explicitlyTrashed,capabilities(canDelete))', pageSize: 100, pageToken, supportsAllDrives: true, includeItemsFromAllDrives: true })
     return res.json({ items: result.data.files ?? [], nextPageToken: result.data.nextPageToken ?? null })
+  } catch (error) { return next(error) }
+})
+
+driveManagementRouter.delete('/items/:fileId/permanent', async (req: AuthRequest, res, next) => {
+  try {
+    const fileId = idSchema.parse(req.params.fileId)
+    const drive = await accountDrive(req)
+    const item = (await drive.files.get({ fileId, fields: 'mimeType,trashed,explicitlyTrashed,capabilities(canDelete)', supportsAllDrives: true })).data
+    if (!item.trashed || !item.explicitlyTrashed) return res.status(409).json({ message: 'Apenas itens colocados diretamente na lixeira podem ser excluídos aqui.' })
+    if (item.mimeType === 'application/vnd.google-apps.folder') return res.status(409).json({ message: 'Por segurança, exclua pastas definitivamente no Google Drive ou esvazie a lixeira da conta.' })
+    if (!item.capabilities?.canDelete) return res.status(403).json({ message: 'Esta conta não tem permissão para excluir este item.' })
+    await drive.files.delete({ fileId, supportsAllDrives: true })
+    await prisma.file.deleteMany({ where: { userId: req.user!.id, connectedAccountId: String(req.params.id), providerFileId: fileId, status: 'deleted' } })
+    return res.json({ status: 'ok' })
+  } catch (error) { return next(error) }
+})
+
+driveManagementRouter.delete('/trash', async (req: AuthRequest, res, next) => {
+  try {
+    const drive = await accountDrive(req)
+    const ids: string[] = []
+    let pageToken: string | undefined
+    do {
+      const page = await drive.files.list({ q: "trashed = true and 'me' in owners", fields: 'nextPageToken,files(id)', pageSize: 1000, pageToken })
+      for (const file of page.data.files ?? []) if (file.id) ids.push(file.id)
+      pageToken = page.data.nextPageToken ?? undefined
+    } while (pageToken)
+    await drive.files.emptyTrash()
+    for (let offset = 0; offset < ids.length; offset += 500) {
+      await prisma.file.deleteMany({ where: { userId: req.user!.id, connectedAccountId: String(req.params.id), providerFileId: { in: ids.slice(offset, offset + 500) }, status: 'deleted' } })
+    }
+    return res.json({ status: 'ok' })
   } catch (error) { return next(error) }
 })
 
