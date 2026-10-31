@@ -6,8 +6,17 @@ import { requireAuth } from '../../middleware/auth.middleware.js'
 import { prisma } from '../../config/prisma.js'
 import { decryptText, encryptText } from '../../utils/crypto.js'
 import Busboy from 'busboy'
+import { env } from '../../config/env.js'
+import type { AuthRequest } from '../../middleware/auth.middleware.js'
 
 export const systemRouter = Router()
+
+systemRouter.use(requireAuth, (req: AuthRequest, res, next) => {
+  if (!env.SYSTEM_ADMIN_USER_ID || req.user?.id !== env.SYSTEM_ADMIN_USER_ID) {
+    return res.status(403).json({ code: 'ADMIN_REQUIRED', message: 'Administrator access required.' })
+  }
+  return next()
+})
 
 
 systemRouter.post('/update', requireAuth, (req, res, next) => {

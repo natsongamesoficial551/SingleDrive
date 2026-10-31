@@ -8,6 +8,7 @@ import { hashPassword, verifyPassword } from '../../utils/password.js'
 import { encryptText, hashToken, randomToken } from '../../utils/crypto.js'
 import { signAccessToken } from '../../utils/jwt.js'
 import { createOAuthClient, syncGoogleQuota } from '../google/google.service.js'
+import { resolveGoogleLoginUser } from './google-login-user.js'
 
 export const authRouter = Router()
 
@@ -102,14 +103,11 @@ authRouter.get('/google/callback', async (req, res) => {
     const profile = await oauth2.userinfo.get()
     const providerAccountId = profile.data.id
     const email = profile.data.email
-    if (!providerAccountId || !email) return res.redirect(`${env.FRONTEND_URL}/google-auth?status=error`)
+    if (!providerAccountId || !email || profile.data.verified_email !== true) return res.redirect(`${env.FRONTEND_URL}/google-auth?status=error`)
 
     const name = profile.data.name || email.split('@')[0] || 'Google User'
-    const user = await prisma.user.upsert({
-      where: { email },
-      create: { email, name, passwordHash: await hashPassword(randomToken(32)) },
-      update: { name },
-    })
+    const user = await resolveGoogleLoginUser(prisma, { email, providerAccountId, name, passwordHash: await hashPassword(randomToken(32)) })
+    if (!user) return res.redirect(`${env.FRONTEND_URL}/google-auth?status=error`)
     const existingAccount = await prisma.connectedAccount.findUnique({ where: { userId_provider_providerAccountId: { userId: user.id, provider: 'google_drive', providerAccountId } } })
     const refreshTokenEncrypted = tokens.refresh_token ? encryptText(tokens.refresh_token) : existingAccount?.refreshTokenEncrypted
     if (!refreshTokenEncrypted) return res.redirect(`${env.FRONTEND_URL}/google-auth?status=error`)

@@ -6,11 +6,12 @@ fornece um servidor MySQL compativel com o esquema atual da aplicacao.
 
 ## Estado atual
 
-Este projeto ainda nao esta pronto para uso publico. A API oferece funcoes de
-administracao global em `/system` a qualquer usuario autenticado, incluindo
-alteracao da configuracao OAuth. A autenticacao e o isolamento entre usuarios
-devem passar por revisao e testes de seguranca antes da implantacao publica.
-Nao exponha o backend na internet ate corrigir e validar esses pontos.
+Este projeto ainda nao esta pronto para uso publico. As rotas de administracao
+global em `/system` exigem agora que `SYSTEM_ADMIN_USER_ID` corresponda ao ID do
+usuario autenticado; sem essa variavel, nenhum usuario acessa essas rotas. O
+login Google exige email verificado e vinculacao previa ao usuario existente.
+A autenticacao e o isolamento entre usuarios ainda precisam de revisao e testes
+adicionais antes da implantacao publica. Nao exponha o backend ate valida-los.
 
 ## Frontend no Netlify
 
@@ -26,9 +27,13 @@ O backend requer Node.js, Prisma e MySQL compativel com as migracoes em
 `backend/prisma/migrations`. Use um provedor que suporte conexoes MySQL,
 armazenamento persistente e uploads em streaming. `APP_HOST=0.0.0.0` permite
 receber conexoes no container; o padrao continua `127.0.0.1` para uso local.
-Configure `APP_PORT`, `FRONTEND_URL`, `DATABASE_URL`, `JWT_ACCESS_SECRET` e
+Configure `FRONTEND_URL`, `DATABASE_URL`, `JWT_ACCESS_SECRET` e
 `TOKEN_ENCRYPTION_KEY` no ambiente privado do backend. Nao reutilize exemplos
 como segredos de producao e nunca os envie ao repositorio.
+O backend usa `APP_PORT`, depois `PORT`, ou 4000 se nenhuma estiver definida.
+Para habilitar as rotas administrativas, configure `SYSTEM_ADMIN_USER_ID` com
+o UUID de um administrador escolhido e autenticado; configure-o somente no
+backend. Na instalacao local, as rotas tambem ficam desativadas se ele faltar.
 
 Uma instalacao nova inicia com banco vazio: contas e conexoes locais nao sao
 automaticamente copiadas. Migrar dados ou segredos exige procedimento proprio.
