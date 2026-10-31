@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
-import { ChevronRight, Cloud, ExternalLink, File, Folder, LoaderCircle } from 'lucide-react'
-import { apiFetch, formatBytes } from '@/lib/api'
+import { useEffect, useRef, useState } from 'react'
+import { ChevronRight, Cloud, Download, ExternalLink, File, Folder, LoaderCircle, Pencil, Trash2, Upload } from 'lucide-react'
+import { apiFetch, apiFetchRaw, formatBytes } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 
 type Account = { id: string; provider: string; email: string; status: string }
-type DriveItem = { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; webViewLink?: string }
+type DriveItem = { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; webViewLink?: string; capabilities?: { canRename?: boolean; canTrash?: boolean; canDownload?: boolean } }
 type FolderPath = { id: string; name: string }
 type BrowseResult = { items: DriveItem[]; nextPageToken: string | null }
 const folderMimeType = 'application/vnd.google-apps.folder'
@@ -29,6 +29,8 @@ export function GoogleDriveBrowser({ accounts }: { accounts: Account[] }) {
   const [nextPageToken, setNextPageToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [revision, setRevision] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
   const folderId = path.at(-1)?.id ?? 'root'
 
   useEffect(() => {
@@ -48,7 +50,48 @@ export function GoogleDriveBrowser({ accounts }: { accounts: Account[] }) {
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Não foi possível carregar os arquivos.') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [accountId, folderId, shared])
+  }, [accountId, folderId, shared, revision])
+
+  const drivePath = `/connected-accounts/${encodeURIComponent(accountId)}/drive`
+  async function perform(action: () => Promise<void>) {
+    setLoading(true)
+    setError('')
+    try { await action(); setRevision((value) => value + 1) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'A operação falhou.') }
+    finally { setLoading(false) }
+  }
+  function rename(item: DriveItem) {
+    const name = window.prompt('Novo nome:', item.name)?.trim()
+    if (!name || name === item.name) return
+    void perform(async () => { await apiFetch(`${drivePath}/items/${encodeURIComponent(item.id)}`, { method: 'PATCH', body: JSON.stringify({ name }) }) })
+  }
+  function trash(item: DriveItem) {
+    if (!window.confirm(`Enviar “${item.name}” para a lixeira do Google Drive? A alteração também aparece no Google Drive.`)) return
+    void perform(async () => { await apiFetch(`${drivePath}/items/${encodeURIComponent(item.id)}/trash`, { method: 'POST' }) })
+  }
+  function createFolder() {
+    const name = window.prompt('Nome da nova pasta:')?.trim()
+    if (!name) return
+    void perform(async () => { await apiFetch(`${drivePath}/folders`, { method: 'POST', body: JSON.stringify({ name, parentId: folderId }) }) })
+  }
+  function upload(file?: globalThis.File) {
+    if (!file) return
+    const params = new URLSearchParams({ name: file.name, parentId: folderId, mimeType: file.type || 'application/octet-stream' })
+    void perform(async () => { await apiFetch(`${drivePath}/upload?${params}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file }) })
+  }
+  async function download(item: DriveItem) {
+    setError('')
+    try {
+      const response = await apiFetchRaw(`${drivePath}/items/${encodeURIComponent(item.id)}/download`)
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = item.mimeType.startsWith('application/vnd.google-apps.') ? `${item.name}.pdf` : item.name
+      anchor.click()
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível baixar o arquivo.') }
+  }
 
   async function loadMore() {
     if (!nextPageToken || loading) return
@@ -78,7 +121,7 @@ export function GoogleDriveBrowser({ accounts }: { accounts: Account[] }) {
         <div className="flex min-w-0 flex-wrap items-center gap-1 text-sm"><button disabled={loading} className="font-bold text-blue-600" onClick={() => setPath([])}>{shared ? 'Compartilhados comigo' : 'Meu Drive'}</button>{path.map((folder, index) => <span key={folder.id} className="inline-flex min-w-0 items-center gap-1"><ChevronRight className="h-4 w-4 shrink-0 text-slate-400" /><button disabled={loading} className="truncate text-slate-700 hover:underline" onClick={() => setPath(path.slice(0, index + 1))}>{folder.name}</button></span>)}</div>
         <div className="flex flex-wrap gap-2"><Button disabled={loading} size="sm" variant={!shared ? 'soft' : 'outline'} onClick={() => { setPath([]); setShared(false) }}>Meu Drive</Button><Button disabled={loading} size="sm" variant={shared ? 'soft' : 'outline'} onClick={() => { setPath([]); setShared(true) }}>Compartilhados comigo</Button></div>
       </div>
-      <p className="px-4 pt-3 text-xs text-slate-500">{account.email} · Os arquivos abrem no Google Drive. Esta lista não altera seus arquivos.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3"><p className="text-xs text-slate-500">{account.email} · Alterações aqui também aparecem no Google Drive. Arquivos Google são baixados em PDF.</p><div className="flex gap-2"><input ref={inputRef} type="file" className="hidden" onChange={(event) => { upload(event.target.files?.[0]); event.target.value = '' }} /><Button size="sm" variant="outline" disabled={loading || (shared && folderId === 'root')} onClick={() => inputRef.current?.click()}><Upload className="h-4 w-4" /> Enviar arquivo</Button><Button size="sm" variant="outline" disabled={loading || (shared && folderId === 'root')} onClick={createFolder}>Nova pasta</Button></div></div>
       {error && <p role="alert" className="mx-4 mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">Não foi possível carregar esta conta: {error}</p>}
       {!loading && !error && items.length === 0 && <p className="p-6 text-sm text-slate-500">Nenhum arquivo ou pasta encontrado aqui.</p>}
       <ul className="divide-y divide-slate-100">
@@ -89,6 +132,9 @@ export function GoogleDriveBrowser({ accounts }: { accounts: Account[] }) {
             {isFolder ? <Folder className="h-5 w-5 shrink-0 text-blue-600" /> : <File className="h-5 w-5 shrink-0 text-slate-400" />}
             <span className="min-w-0 flex-1 truncate" title={item.name}>{isFolder ? <button disabled={loading} className="max-w-full truncate text-left font-semibold hover:underline" onClick={() => setPath((current) => [...current, { id: item.id, name: item.name }])}>{item.name}</button> : <span>{item.name}</span>}</span>
             {!isFolder && item.size && <span className="hidden shrink-0 text-xs text-slate-500 sm:inline">{formatBytes(item.size)}</span>}
+            {!isFolder && item.capabilities?.canDownload && <button disabled={loading} onClick={() => void download(item)} aria-label={`Baixar ${item.name}`} title="Baixar" className="rounded p-1.5 text-slate-600 hover:bg-slate-100"><Download className="h-4 w-4" /></button>}
+            {item.capabilities?.canRename && <button disabled={loading} onClick={() => rename(item)} aria-label={`Renomear ${item.name}`} title="Renomear" className="rounded p-1.5 text-slate-600 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button>}
+            {item.capabilities?.canTrash && <button disabled={loading} onClick={() => trash(item)} aria-label={`Enviar ${item.name} para a lixeira`} title="Enviar para a lixeira do Google Drive" className="rounded p-1.5 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>}
             {link && <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-blue-600" aria-label={`Abrir ${item.name} no Google Drive`}>Abrir <ExternalLink className="h-3.5 w-3.5" /></a>}
           </li>
         })}

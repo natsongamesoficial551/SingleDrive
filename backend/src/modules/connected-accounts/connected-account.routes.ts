@@ -10,8 +10,10 @@ import { createOAuthClient, getAuthedGoogleClient, syncGoogleQuota } from '../go
 import { resolveGoogleLoginUser } from '../auth/google-login-user.js'
 import { parseGoogleBrowseQuery } from '../google/browse-query.js'
 import { syncS3Quota, testS3Connection } from '../s3/s3.service.js'
+import { driveManagementRouter } from '../google/drive-management.routes.js'
 
 export const connectedAccountRouter = Router()
+connectedAccountRouter.use('/:id/drive', requireAuth, driveManagementRouter)
 
 const s3ConnectSchema = z.object({
   name: z.string().trim().min(1).max(191),
@@ -292,7 +294,7 @@ connectedAccountRouter.get('/:id/browse', requireAuth, async (req: AuthRequest, 
     const response = await drive.files.list({
       q: query.driveQuery,
       spaces: 'drive',
-      fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)',
+      fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink,capabilities(canEdit,canRename,canTrash,canDownload,canAddChildren))',
       pageSize: 100,
       pageToken: query.pageToken,
       orderBy: 'folder,name',

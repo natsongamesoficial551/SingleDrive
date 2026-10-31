@@ -23,7 +23,7 @@ async function refreshAccessToken() {
   return true
 }
 
-export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promise<T> {
+export async function apiFetchRaw(path: string, options: ApiOptions = {}): Promise<Response> {
   const headers = new Headers(options.headers)
   const token = getAccessToken()
   if (!options.skipAuth && token) headers.set('Authorization', `Bearer ${token}`)
@@ -31,7 +31,7 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
 
   const response = await fetch(`${API_URL}${path}`, { ...options, headers })
   if (response.status === 401 && options.retry !== false && !options.skipAuth && await refreshAccessToken()) {
-    return apiFetch<T>(path, { ...options, retry: false })
+    return apiFetchRaw(path, { ...options, retry: false })
   }
 
   if (!response.ok) {
@@ -40,7 +40,11 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
     throw new Error(error.message ?? 'Request failed')
   }
 
-  return response.json() as Promise<T>
+  return response
+}
+
+export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promise<T> {
+  return (await apiFetchRaw(path, options)).json() as Promise<T>
 }
 
 export function formatBytes(input: string | number | bigint | null | undefined) {
