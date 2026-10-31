@@ -1,8 +1,8 @@
 # Publicacao do SingleDrive
 
-O frontend pode ser construido pelo Netlify a partir do repositorio. O backend
-Express e o banco MySQL exigem hospedagem separada e persistente. O Netlify nao
-fornece um servidor MySQL compativel com o esquema atual da aplicacao.
+O frontend pode ser construido pelo Netlify a partir do repositorio. A arquitetura
+em preparacao usa API gratuita no Render e PostgreSQL Neon atraves da integracao
+do Netlify. O MySQL permanece em uso somente na instalacao local existente.
 
 ## Estado atual
 
@@ -23,9 +23,14 @@ as inclui no codigo entregue aos navegadores.
 
 ## Backend e banco
 
-O backend requer Node.js, Prisma e MySQL compativel com as migracoes em
-`backend/prisma/migrations`. Use um provedor que suporte conexoes MySQL,
-armazenamento persistente e uploads em streaming. `APP_HOST=0.0.0.0` permite
+O backend de nuvem requer Node.js, Prisma e PostgreSQL. O arquivo
+`backend/Dockerfile.postgres` usa o esquema e a migracao de base vazia em
+`backend/prisma-postgres`, independentes do MySQL local em `backend/prisma`.
+Alteracoes futuras no modelo devem ser aplicadas e migradas nos dois esquemas.
+A compatibilidade ainda precisa ser testada com um banco PostgreSQL real; a
+migracao inicial nao copia os dados MySQL. O arquivo `docs/render-exemplo.yaml`
+documenta um servico Render gratuito, mas ainda nao realiza uma implantacao.
+`APP_HOST=0.0.0.0` permite
 receber conexoes no container; o padrao continua `127.0.0.1` para uso local.
 Configure `FRONTEND_URL`, `DATABASE_URL`, `JWT_ACCESS_SECRET` e
 `TOKEN_ENCRYPTION_KEY` no ambiente privado do backend. Nao reutilize exemplos
@@ -43,3 +48,9 @@ O acesso amplo ao Drive pode exigir verificacao do aplicativo pelo Google.
 
 O projeto deriva do 9Drive de zenhosta. Preserve o arquivo `LICENSE` e os
 avisos de direitos autorais aplicaveis na redistribuicao.
+
+O Render Free desliga o servidor depois de 15 minutos ociosos e pode demorar
+aproximadamente um minuto para reativa-lo; usa ate 750 horas gratuitas por mes
+por workspace. Confirme os limites e termos vigentes antes de criar servicos.
+O Render Postgres Free expira apos 30 dias; nao e o banco escolhido aqui.
+Fontes: https://render.com/docs/free e https://neon.com/pricing

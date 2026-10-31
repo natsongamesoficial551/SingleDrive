@@ -1,0 +1,28 @@
+# Exemplo para revisao; nao conectar a uma implantacao publica ate validar
+# seguranca, autenticacao, migracoes e uploads com uma base de teste.
+services:
+  - type: web
+    name: singledrive-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile.postgres
+    dockerContext: ./backend
+    autoDeployTrigger: off
+    healthCheckPath: /health
+    envVars:
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: FRONTEND_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
