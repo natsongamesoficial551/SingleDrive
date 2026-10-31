@@ -5,6 +5,7 @@ import type { Response } from 'express'
 import type { Readable } from 'node:stream'
 import { prisma } from '../../config/prisma.js'
 import { decryptText } from '../../utils/crypto.js'
+import { safeDisposition } from '../files/file-headers.js'
 
 type S3Config = S3StorageConfig
 type FileWithAccount = File & { connectedAccount: ConnectedAccount }
@@ -15,6 +16,9 @@ function contentDisposition(type: 'inline' | 'attachment', fileName: string) {
 }
 
 export function createS3Client(config: S3Config) {
+  // Endpoints personalizados existentes também são bloqueados, não apenas novos cadastros.
+  if (config.endpoint) throw new Error('Custom S3 endpoints are disabled for security.')
+  if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(config.region)) throw new Error('Invalid S3 region.')
   return new S3Client({
     region: config.region,
     endpoint: config.endpoint ?? undefined,
@@ -27,6 +31,8 @@ export function createS3Client(config: S3Config) {
 }
 
 export async function getS3ConfigForAccount(accountId: string, userId?: string) {
+  const account = await prisma.connectedAccount.findFirst({ where: { id: accountId, ...(userId ? { userId } : {}), status: 'connected', user: { status: 'active' } } })
+  if (!account) throw new Error('Storage account disconnected or awaiting security review.')
   return prisma.s3StorageConfig.findFirstOrThrow({ where: { connectedAccountId: accountId, status: 'active', ...(userId ? { userId } : {}) } })
 }
 
@@ -94,7 +100,7 @@ export async function streamS3File(file: FileWithAccount, range: string | undefi
   res.status(response.ContentRange ? 206 : 200)
   res.setHeader('Content-Type', response.ContentType ?? file.mimeType)
   res.setHeader('Accept-Ranges', 'bytes')
-  if (options.disposition) res.setHeader('Content-Disposition', contentDisposition(options.disposition, file.name))
+  res.setHeader('Content-Disposition', safeDisposition(options.disposition, response.ContentType ?? file.mimeType, file.name))
   if (response.ContentLength !== undefined) res.setHeader('Content-Length', response.ContentLength.toString())
   if (response.ContentRange) res.setHeader('Content-Range', response.ContentRange)
 

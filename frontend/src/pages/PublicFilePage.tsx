@@ -3,8 +3,7 @@ import { useParams } from 'react-router-dom'
 import { Download, ExternalLink, FileArchive, FileText, ImageIcon, Play, Table2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { API_URL, apiFetch, formatBytes, formatDate } from '@/lib/api'
-import { createPlyr, ensurePlyr } from '@/lib/plyr'
-import { getPreviewKind, isSpreadsheetMimeType, officeViewerUrl } from '@/lib/preview'
+import { getPreviewKind, isSpreadsheetMimeType } from '@/lib/preview'
 
 type PublicFile = { name: string; mimeType: string; sizeBytes: string; createdAt: string }
 
@@ -58,22 +57,6 @@ export function PublicFilePage({ embed = false }: { embed?: boolean }) {
     }
   }, [file])
 
-  useEffect(() => {
-    if (kind !== 'video' || !videoRef.current) return undefined
-    let disposed = false
-    let player: { destroy: () => void } | null = null
-
-    ensurePlyr().then(() => {
-      if (disposed || !videoRef.current) return
-      player = createPlyr(videoRef.current)
-    }).catch(() => undefined)
-
-    return () => {
-      disposed = true
-      player?.destroy()
-    }
-  }, [kind, previewUrl])
-
   if (failed) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#0f1117] p-6 text-white">
@@ -95,7 +78,7 @@ export function PublicFilePage({ embed = false }: { embed?: boolean }) {
       {kind === 'image' ? <img src={previewUrl} alt={file.name} className="max-h-full max-w-full object-contain shadow-2xl shadow-black/30" /> : null}
       {kind === 'video' ? <div className="shared-video-shell"><video ref={videoRef} controls playsInline preload="metadata"><source src={previewUrl} type={file.mimeType} /></video></div> : null}
       {kind === 'document' ? <iframe src={previewUrl} title={file.name} className="h-full w-full border-0 bg-white" /> : null}
-      {kind === 'office' ? <iframe src={officeViewerUrl(previewUrl)} title={file.name} className="h-full w-full border-0 bg-white" /> : null}
+      {kind === 'office' ? <UnsupportedPreview file={file} downloadUrl={downloadUrl} /> : null}
       {!kind ? <UnsupportedPreview file={file} downloadUrl={downloadUrl} /> : null}
     </div>
   )

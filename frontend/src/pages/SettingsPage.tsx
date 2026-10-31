@@ -1,3 +1,4 @@
+import { startGoogleAuth, type GoogleAccessMode } from '@/lib/google-auth'
 import { useEffect, useState, useRef, type FormEvent } from 'react'
 import { Bell, Cloud, Database, Globe, HardDrive, Link2, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -30,6 +31,7 @@ export function SettingsPage() {
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([])
   const [message, setMessage] = useState('')
   const [connecting, setConnecting] = useState(false)
+  const [googleAccessMode, setGoogleAccessMode] = useState<GoogleAccessMode>('essential')
   const [s3Open, setS3Open] = useState(false)
   const [connectingS3, setConnectingS3] = useState(false)
   const [s3Form, setS3Form] = useState({ name: '', bucket: '', region: 'us-east-1', endpoint: '', accessKeyId: '', secretAccessKey: '', forcePathStyle: false, quotaBytes: '' })
@@ -291,12 +293,7 @@ export function SettingsPage() {
       popup.document.write('<html><head><title>Connecting...</title><style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc;color:#64748b;}</style></head><body><div style="text-align:center;"><h2>Connecting to Google...</h2><p>Please wait while we redirect you.</p></div></body></html>')
     }
     try {
-      const data = await apiFetch<{ url: string }>('/connected-accounts/google/connect-url')
-      if (popup) {
-        popup.location.href = data.url
-      } else {
-        window.location.href = data.url
-      }
+      await startGoogleAuth('connect', popup ?? window, googleAccessMode)
     } catch (error) {
       if (popup) popup.close()
       setMessage(error instanceof Error ? error.message : 'Failed to start Google Drive connection')
@@ -379,7 +376,15 @@ export function SettingsPage() {
             <div className="flex flex-col gap-3.5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2.5"><Cloud className="h-5 w-5 text-blue-600" /><h2 className="text-[16px] font-bold">Google Drive</h2></div>
-                <p className="mt-1 text-[13px] text-slate-500">Conecte suas contas Google Drive. O SingleDrive envia os arquivos para uma conta com espaco disponivel.</p>
+                <p className="mt-1 text-[13px] text-slate-500">Escolha a permissão antes de conectar ou reconectar uma conta.</p>
+                <label className="mt-3 grid gap-2 text-sm font-semibold">Acesso ao Google Drive
+                  <select className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:bg-slate-950" value={googleAccessMode} onChange={event => setGoogleAccessMode(event.target.value as GoogleAccessMode)}>
+                    <option value="essential">Essencial — arquivos acessíveis ao aplicativo</option>
+                    <option value="full">Completo — todo o Google Drive</option>
+                  </select>
+                </label>
+                <p className="mt-2 text-xs text-slate-500">{googleAccessMode === 'essential' ? 'Permite enviar, abrir, renomear, mover e apagar arquivos criados pelo SingleDrive ou autorizados para o aplicativo. Arquivos preexistentes fora desse conjunto ficam inacessíveis.' : 'Permite listar, abrir, alterar e excluir arquivos de todo o Drive autorizado. Escolha apenas se precisar desse gerenciamento completo.'}</p>
+                <p className="mt-2 text-xs text-slate-500">A escolha vale para a conexão seguinte. Para reduzir uma permissão já concedida, pode ser necessário revogar o acesso anterior na Conta Google e reconectar.</p>
               </div>
               <Button className="w-full sm:w-32" size="sm" onClick={connectDrive} disabled={connecting}><Link2 className="h-4 w-4" />{connecting ? 'Opening...' : 'Conectar Google Drive'}</Button>
             </div>
@@ -389,7 +394,7 @@ export function SettingsPage() {
             <div className="flex flex-col gap-3.5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2.5"><Database className="h-5 w-5 text-blue-600" /><h2 className="text-[16px] font-bold">S3 Compatible</h2></div>
-                <p className="mt-1 text-[13px] text-slate-500">Connect AWS S3, Cloudflare R2, MinIO, Wasabi, Backblaze B2, or custom endpoint storage.</p>
+                <p className="mt-1 text-[13px] text-slate-500">Conecte um bucket AWS S3. Endpoints personalizados estão desativados por segurança.</p>
               </div>
               <Button className="w-full sm:w-32" size="sm" variant="outline" onClick={() => setS3Open(true)}><Database className="h-4 w-4" />Connect S3</Button>
             </div>
@@ -609,12 +614,11 @@ export function SettingsPage() {
           <Card className="p-4"><Globe className="h-5 w-5 text-blue-600" /><h2 className="mt-2 text-[14px] font-bold">Region</h2><p className="mt-1 text-[12px] text-slate-500">Workspace region: local gateway.</p></Card>
         </div>
       </div>
-      <DummyModal open={s3Open} title="Connect S3 Storage" description="Use any S3-compatible provider with custom endpoint support." onClose={() => setS3Open(false)}>
+      <DummyModal open={s3Open} title="Connect S3 Storage" description="Use um bucket AWS S3 com região válida." onClose={() => setS3Open(false)}>
         <form className="grid gap-4" onSubmit={connectS3}>
           <input className="h-11 rounded-xl border border-slate-200 px-3 text-sm" placeholder="Display name" value={s3Form.name} onChange={(event) => setS3Form({ ...s3Form, name: event.target.value })} required />
           <input className="h-11 rounded-xl border border-slate-200 px-3 text-sm" placeholder="Bucket" value={s3Form.bucket} onChange={(event) => setS3Form({ ...s3Form, bucket: event.target.value })} required />
           <input className="h-11 rounded-xl border border-slate-200 px-3 text-sm" placeholder="Region" value={s3Form.region} onChange={(event) => setS3Form({ ...s3Form, region: event.target.value })} required />
-          <input className="h-11 rounded-xl border border-slate-200 px-3 text-sm" placeholder="Endpoint URL (optional)" value={s3Form.endpoint} onChange={(event) => setS3Form({ ...s3Form, endpoint: event.target.value })} />
           <input className="h-11 rounded-xl border border-slate-200 px-3 text-sm" placeholder="Access key ID" value={s3Form.accessKeyId} onChange={(event) => setS3Form({ ...s3Form, accessKeyId: event.target.value })} required />
           <input className="h-11 rounded-xl border border-slate-200 px-3 text-sm" placeholder="Secret access key" type="password" value={s3Form.secretAccessKey} onChange={(event) => setS3Form({ ...s3Form, secretAccessKey: event.target.value })} required />
           <input className="h-11 rounded-xl border border-slate-200 px-3 text-sm" placeholder="Quota bytes (optional)" inputMode="numeric" value={s3Form.quotaBytes} onChange={(event) => setS3Form({ ...s3Form, quotaBytes: event.target.value })} />

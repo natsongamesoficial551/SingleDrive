@@ -11,6 +11,10 @@ export function createOAuthClient(config: ProviderConfig) {
 }
 
 export async function getAuthedGoogleClient(account: ConnectedAccount) {
+  if (account.status !== 'connected') throw new Error('Storage account disconnected or awaiting security review.')
+  if (!Array.isArray(account.scopes) || !account.scopes.some(scope => scope === 'https://www.googleapis.com/auth/drive.file' || scope === 'https://www.googleapis.com/auth/drive')) throw new Error('Reconnect Google with explicit permissions.')
+  const owner = await prisma.user.findUnique({ where: { id: account.userId }, select: { status: true } })
+  if (owner?.status !== 'active') throw new Error('Storage owner is inactive.')
   if (!account.accessTokenEncrypted || !account.refreshTokenEncrypted || !account.tokenExpiresAt) throw new Error('Google account tokens are missing.')
   if (!account.providerConfigId) throw new Error('Google provider config is missing.')
   const config = await prisma.providerConfig.findUniqueOrThrow({ where: { id: account.providerConfigId } })

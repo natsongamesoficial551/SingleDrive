@@ -11,19 +11,7 @@
     <meta name="theme-color" content="#087f73" />
     <meta name="description" content="Google Drive storage gateway for files, folders, sharing, and quota tracking." />
     <title>SingleDrive | Seu espaço na nuvem</title>
-    <script>
-      (function() {
-        const saved = localStorage.getItem('singledrive:theme');
-        const theme = saved === 'light' || saved === 'dark' ? saved : 'light';
-        if (theme === 'dark') {
-          document.documentElement.classList.add('dark');
-          document.documentElement.classList.remove('light');
-        } else {
-          document.documentElement.classList.add('light');
-          document.documentElement.classList.remove('dark');
-        }
-      })();
-    </script>
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>

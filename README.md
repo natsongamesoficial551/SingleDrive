@@ -93,7 +93,7 @@ Try the live preview at **[9drive.zenhosta.com](https://9drive.zenhosta.com)**.
 - In-app API docs with cURL and JavaScript examples.
 
 **Accounts and admin**
-- Email/password sign-up (optional reCAPTCHA) or **Continue with Google**, which connects your first Drive automatically.
+- Cadastro por senha (reCAPTCHA opcional) ou login Google. O login verifica a identidade; a conexão ao Drive é feita separadamente em Configurações, com acesso Essencial (`drive.file`) ou Completo (`drive`).
 - Google OAuth credentials can be set in **Settings**. No `.env` editing needed.
 - Backup/restore and one-click updates from Settings (for PM2 setups).
 

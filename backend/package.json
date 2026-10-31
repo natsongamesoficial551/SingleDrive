@@ -13,7 +13,10 @@
     "seed:google-config": "tsx src/scripts/seed-google-config.ts",
     "seed:google-config:docker": "tsx src/scripts/seed-google-config-if-present.ts",
     "test:s3": "tsx src/scripts/test-s3-connection.ts",
-    "test:api-upload": "tsx src/scripts/test-api-upload.ts"
+    "test:api-upload": "tsx src/scripts/test-api-upload.ts",
+    "test:security": "node --test tests/security.test.cjs",
+    "test:security:migration": "node --test tests/migration-security.test.cjs",
+    "audit:google-public-permissions": "tsx src/scripts/audit-google-public-permissions.ts"
   },
   "keywords": [],
   "author": "",
@@ -29,6 +32,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.2",
     "googleapis": "^173.0.0",
     "jsonwebtoken": "^9.0.3",
     "prisma": "^6.19.3",
@@ -44,5 +48,9 @@
     "@types/node": "^25.9.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0",
+    "minimatch": "^11.0.1"
   }
 }

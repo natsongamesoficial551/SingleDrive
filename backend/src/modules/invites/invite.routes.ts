@@ -48,14 +48,14 @@ function serializeInvite(invite: InviteRecord, target: TargetRecord | null, user
 
 inviteRouter.get('/', async (req: AuthRequest, res, next) => {
   try {
-    const me = await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id }, select: { email: true } })
+    const me = await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id }, select: { email: true, emailVerifiedAt: true } })
     const [sent, received] = await Promise.all([
       prisma.workspaceInvite.findMany({ where: { inviterId: req.user!.id, revokedAt: null, targetId: { not: '' } }, orderBy: { createdAt: 'desc' } }),
-      prisma.workspaceInvite.findMany({ where: { inviteeEmail: me.email, revokedAt: null, targetId: { not: '' } }, orderBy: { createdAt: 'desc' } }),
+      prisma.workspaceInvite.findMany({ where: { inviteeEmail: me.email, ...(me.emailVerifiedAt ? {} : { id: '__unverified__' }), revokedAt: null, targetId: { not: '' } }, orderBy: { createdAt: 'desc' } }),
     ])
     const allInvites = [...sent, ...received]
     const emails = [...new Set(sent.map((invite) => invite.inviteeEmail))]
-    const users = await prisma.user.findMany({ where: { email: { in: emails } }, select: { id: true, name: true, email: true } })
+    const users = await prisma.user.findMany({ where: { email: { in: emails }, emailVerifiedAt: { not: null }, status: 'active' }, select: { id: true, name: true, email: true } })
     const userByEmail = new Map(users.map((user) => [user.email, user]))
     const acceptedInvites = sent.filter((invite) => invite.status === 'pending' && userByEmail.has(invite.inviteeEmail))
     if (acceptedInvites.length > 0) await prisma.workspaceInvite.updateMany({ where: { id: { in: acceptedInvites.map((invite) => invite.id) } }, data: { status: 'accepted', acceptedAt: new Date() } })
@@ -72,10 +72,10 @@ inviteRouter.post('/', async (req: AuthRequest, res, next) => {
   try {
     const body = inviteSchema.parse(req.body)
     const email = body.email.trim().toLowerCase()
-    const inviter = await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id }, select: { email: true } })
+    const inviter = await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id }, select: { email: true, emailVerifiedAt: true } })
     if (email === inviter.email) return res.status(400).json({ code: 'INVITE_SELF_NOT_ALLOWED', message: 'You cannot invite yourself.' })
     await assertTargetOwner(req.user!.id, body.targetType, body.targetId)
-    const existingUser = await prisma.user.findUnique({ where: { email }, select: { id: true, name: true, email: true } })
+    const existingUser = await prisma.user.findUnique({ where: { email, emailVerifiedAt: { not: null }, status: 'active' }, select: { id: true, name: true, email: true } })
     const invite = await prisma.workspaceInvite.upsert({
       where: { inviterId_inviteeEmail_targetType_targetId: { inviterId: req.user!.id, inviteeEmail: email, targetType: body.targetType, targetId: body.targetId } },
       create: { inviterId: req.user!.id, inviteeEmail: email, role: body.role, targetType: body.targetType, targetId: body.targetId, status: existingUser ? 'accepted' : 'pending', acceptedAt: existingUser ? new Date() : null },

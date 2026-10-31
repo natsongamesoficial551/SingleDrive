@@ -12,6 +12,8 @@ model User {
   name           String             @db.VarChar(191)
   email          String             @unique @db.VarChar(191)
   passwordHash   String             @map("password_hash") @db.VarChar(255)
+  googleSubject  String?            @unique @map("google_subject") @db.VarChar(191)
+  emailVerifiedAt DateTime?         @map("email_verified_at")
   status         String             @default("active") @db.VarChar(32)
   createdAt      DateTime           @default(now()) @map("created_at")
   updatedAt      DateTime           @updatedAt @map("updated_at")
@@ -32,6 +34,15 @@ model User {
   apiKeys       ApiKey[]
 
   @@map("users")
+}
+
+model SecurityRateLimit {
+  id        String   @id @db.VarChar(96)
+  hits      Int      @default(1)
+  expiresAt DateTime @map("expires_at")
+
+  @@index([expiresAt])
+  @@map("security_rate_limits")
 }
 
 model ApiKey {
@@ -122,6 +133,9 @@ model OauthState {
   userId           String?        @map("user_id") @db.Char(36)
   providerConfigId String         @map("provider_config_id") @db.Char(36)
   flow             String         @default("connect") @db.VarChar(32)
+  codeChallenge    String         @map("code_challenge") @db.VarChar(43)
+  accessMode       String         @default("essential") @map("access_mode") @db.VarChar(16)
+  sessionId        String?        @map("session_id") @db.Char(36)
   stateHash        String         @unique @map("state_hash") @db.VarChar(255)
   expiresAt        DateTime       @map("expires_at")
   usedAt           DateTime?      @map("used_at")

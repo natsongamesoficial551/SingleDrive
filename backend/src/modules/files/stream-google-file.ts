@@ -1,6 +1,7 @@
 import type { Response } from 'express'
 import type { ConnectedAccount, File } from '@prisma/client'
 import { getAuthedGoogleClient } from '../google/google.service.js'
+import { safeDisposition } from './file-headers.js'
 
 type FileWithAccount = File & { connectedAccount: ConnectedAccount }
 type StreamOptions = { disposition?: 'inline' | 'attachment' }
@@ -55,7 +56,7 @@ export async function streamGoogleFile(file: FileWithAccount, range: string | un
   res.status(response.status)
   res.setHeader('Content-Type', responseMimeType)
   res.setHeader('Accept-Ranges', 'bytes')
-  if (options.disposition) res.setHeader('Content-Disposition', contentDisposition(options.disposition, responseFileName))
+  res.setHeader('Content-Disposition', safeDisposition(options.disposition, responseMimeType, responseFileName))
 
   const contentLength = response.headers.get('content-length')
   const contentRange = response.headers.get('content-range')

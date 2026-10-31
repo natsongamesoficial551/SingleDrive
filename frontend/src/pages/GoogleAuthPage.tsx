@@ -1,40 +1,33 @@
-import { useEffect, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { HardDrive } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Card } from '@/components/ui/card'
-import { apiFetch } from '@/lib/api'
+import { apiFetch, restoreSession } from '@/lib/api'
 import { setAuthSession, type AuthUser } from '@/lib/auth'
-
-type AuthResponse = { accessToken: string; refreshToken: string; user: AuthUser }
+import { consumeGoogleFlow } from '@/lib/google-auth'
 
 export function GoogleAuthPage() {
-  const [params] = useSearchParams()
   const navigate = useNavigate()
-  const [message, setMessage] = useState('Completing Google sign-in...')
-  const token = params.get('token')
-  const status = params.get('status')
-
+  const started = useRef(false)
+  const [message, setMessage] = useState('Confirmando autorização Google…')
   useEffect(() => {
-    if (status === 'error' || !token) {
-      setMessage('Google sign-in failed. Please try again.')
-      return
-    }
-
-    apiFetch<AuthResponse>('/auth/google/exchange', { method: 'POST', skipAuth: true, body: JSON.stringify({ token }) })
-      .then((data) => {
-        setAuthSession(data.accessToken, data.refreshToken, data.user)
-        navigate('/all-files', { replace: true })
+    if (started.current) return
+    started.current = true
+    const params = new URLSearchParams(window.location.hash.slice(1))
+    window.history.replaceState(null, '', window.location.pathname)
+    void (async () => {
+      const state = params.get('state'), code = params.get('code')
+      if (!state || !code) throw new Error('A autorização falhou. Inicie novamente.')
+      const pending = consumeGoogleFlow(state)
+      if (pending.flow === 'connect' && !(await restoreSession())) throw new Error('Entre novamente antes de conectar o Drive.')
+      const data = await apiFetch<{ accessToken?: string; user?: AuthUser; status?: string }>('/auth/google/complete', {
+        method: 'POST', skipAuth: pending.flow === 'login', retry: false,
+        body: JSON.stringify({ state, code, verifier: pending.verifier }),
       })
-      .catch((error) => setMessage(error instanceof Error ? error.message : 'Google sign-in failed. Please try again.'))
-  }, [navigate, status, token])
-
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 p-5">
-      <Card className="w-full max-w-sm p-6 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white"><HardDrive className="h-6 w-6" /></div>
-        <h1 className="mt-4 text-xl font-extrabold">Google Sign-in</h1>
-        <p className="mt-2 text-sm text-slate-500">{message}</p>
-      </Card>
-    </main>
-  )
+      if (pending.flow === 'connect') { navigate('/google-connected?status=success', { replace: true }); return }
+      if (!data.accessToken || !data.user) throw new Error('Resposta de autenticação inválida.')
+      setAuthSession(data.accessToken, data.user)
+      navigate('/all-files', { replace: true })
+    })().catch(error => setMessage(error instanceof Error ? error.message : 'Falha na autorização.'))
+  }, [navigate])
+  return <main className="flex min-h-screen items-center justify-center bg-slate-50 p-5"><Card className="w-full max-w-sm p-6 text-center"><h1 className="text-xl font-bold">Autorização Google</h1><p className="mt-3 text-sm text-slate-600">{message}</p></Card></main>
 }

@@ -24,10 +24,6 @@ export function getPreviewKind(mimeType: string | undefined): PreviewKind | null
   return null
 }
 
-export function officeViewerUrl(fileUrl: string) {
-  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`
-}
-
 export function isSpreadsheetMimeType(mimeType: string | undefined) {
   return mimeType === 'application/vnd.google-apps.spreadsheet' || mimeType === 'application/vnd.ms-excel' || mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 }

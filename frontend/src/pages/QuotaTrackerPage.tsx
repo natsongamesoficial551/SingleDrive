@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { CheckCircle, Cloud, Database, Link2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -44,6 +45,7 @@ function statusColor(percent: number) {
 }
 
 export function QuotaTrackerPage() {
+  const navigate = useNavigate()
   const [summary, setSummary] = useState<StorageSummary | null>(null)
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([])
   const [routingPolicy, setRoutingPolicy] = useState<RoutingPolicy>({ mode: 'most_available', priorityAccountIds: [], roundRobinCursor: 0 })
@@ -92,23 +94,8 @@ export function QuotaTrackerPage() {
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
-  async function connectDrive() {
-    const popup = window.open('', 'google-drive-connect', 'width=540,height=720')
-    if (popup) {
-      popup.document.write('<html><head><title>Connecting...</title><style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc;color:#64748b;}</style></head><body><div style="text-align:center;"><h2>Connecting to Google...</h2><p>Please wait while we redirect you.</p></div></body></html>')
-    }
-    try {
-      const data = await apiFetch<{ url: string }>('/connected-accounts/google/connect-url')
-      if (popup) {
-        popup.location.href = data.url
-      } else {
-        window.location.href = data.url
-      }
-    } catch (e) {
-      if (popup) popup.close()
-      setMessage(e instanceof Error ? e.message : 'Nao foi possivel iniciar a conexao com o Google Drive.')
-      console.error('Failed to start Google Drive connection from Quota Tracker', e)
-    }
+  function connectDrive() {
+    navigate('/settings')
   }
 
   async function sync(accountId: string) {

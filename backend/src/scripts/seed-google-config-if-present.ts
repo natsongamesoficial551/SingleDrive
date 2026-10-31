@@ -2,7 +2,8 @@ import { prisma } from '../config/prisma.js'
 import { encryptText } from '../utils/crypto.js'
 
 const scopes = [
-  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/drive.file',
+  'openid',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
 ]

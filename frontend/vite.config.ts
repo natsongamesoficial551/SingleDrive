@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
-import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
   plugins: [
@@ -26,14 +26,14 @@ export default defineConfig({
         ],
       },
       workbox: {
-        navigateFallbackDenylist: [/^\/(auth|connected-accounts|files|folders|invites|provider-configs|public|storage|uploads)(\/|$)/],
+        navigateFallbackDenylist: [/^\/(api|auth|connected-accounts|files|folders|invites|provider-configs|public|storage|uploads)(\/|$)/],
         globPatterns: ['**/*.{js,css,html,svg,ico,png,webp,woff2}'],
       },
     }),
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
 })

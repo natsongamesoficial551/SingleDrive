@@ -1,3 +1,4 @@
+import { startGoogleAuth } from '@/lib/google-auth'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { BrandLogo } from '@/components/drive/BrandLogo'
@@ -9,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { apiFetch } from '@/lib/api'
 import { setAuthSession, type AuthUser } from '@/lib/auth'
 
-type AuthResponse = { accessToken: string; refreshToken: string; user: AuthUser }
+type AuthResponse = { accessToken: string; user: AuthUser }
 const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY?.trim()
 
 declare global {
@@ -62,8 +63,7 @@ export function RegisterPage() {
     setGoogleLoading(true)
     setError('')
     try {
-      const data = await apiFetch<{ url: string }>('/auth/google/url', { skipAuth: true })
-      window.location.href = data.url
+      await startGoogleAuth('login')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google register failed')
       setGoogleLoading(false)
@@ -81,7 +81,7 @@ export function RegisterPage() {
     }
     try {
       const data = await apiFetch<AuthResponse>('/auth/register', { method: 'POST', skipAuth: true, body: JSON.stringify({ name, email, password, captchaToken }) })
-      setAuthSession(data.accessToken, data.refreshToken, data.user)
+      setAuthSession(data.accessToken, data.user)
       navigate('/all-files')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Register failed')
@@ -102,7 +102,7 @@ export function RegisterPage() {
         <form onSubmit={submit} className="mt-6 grid gap-4">
           <label className="grid gap-2 text-sm font-semibold">Nome<Input value={name} onChange={(e) => setName(e.target.value)} required /></label>
           <label className="grid gap-2 text-sm font-semibold">Email<Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-          <label className="grid gap-2 text-sm font-semibold">Senha<Input type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+          <label className="grid gap-2 text-sm font-semibold">Senha<Input type="password" minLength={12} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
           {recaptchaSiteKey ? <div className="min-h-[78px] overflow-hidden rounded-xl bg-slate-50 p-2"><div ref={recaptchaRef} /></div> : null}
           {error ? <p className="rounded-xl bg-red-50 p-3 text-sm text-red-600">{error}</p> : null}
           <Button disabled={loading}>{loading ? 'Criando...' : 'Criar conta'}</Button>

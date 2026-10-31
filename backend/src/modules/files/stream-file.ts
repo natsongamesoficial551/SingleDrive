@@ -7,6 +7,7 @@ type FileWithAccount = File & { connectedAccount: ConnectedAccount }
 type StreamOptions = { disposition?: 'inline' | 'attachment' }
 
 export function streamProviderFile(file: FileWithAccount, range: string | undefined, res: Response, options: StreamOptions = {}) {
+  if (file.userId !== file.connectedAccount.userId || file.connectedAccount.status !== 'connected') return res.status(404).json({ code: 'FILE_UNAVAILABLE', message: 'File unavailable.' })
   if (file.provider === 's3') return streamS3File(file, range, res, options)
   return streamGoogleFile(file, range, res, options)
 }

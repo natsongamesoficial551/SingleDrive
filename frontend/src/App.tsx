@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react'
+import { restoreSession } from '@/lib/api'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import { DriveLayout } from '@/layouts/DriveLayout'
@@ -20,6 +22,14 @@ import { UploadProvider } from '@/context/UploadContext'
 
 
 function App() {
+  const [ready, setReady] = useState(false)
+  const started = useRef(false)
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    void restoreSession().finally(() => setReady(true))
+  }, [])
+  if (!ready) return <main className="p-6">Carregando…</main>
   return (
     <UploadProvider>
       <Routes>

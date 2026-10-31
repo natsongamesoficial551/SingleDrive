@@ -15,12 +15,28 @@ import { apiKeyRouter } from './modules/api-keys/api-key.routes.js'
 import { publicApiRouter } from './modules/public-api/public-api.routes.js'
 import { auditLogRouter } from './modules/audit-logs/audit-log.routes.js'
 import { systemRouter } from './modules/system/system.routes.js'
+import { rateLimit } from 'express-rate-limit'
+import { AuthRateLimitStore } from './middleware/auth-rate-limit.js'
 
 export const app = express()
-app.set('trust proxy', true)
+app.disable('x-powered-by')
+app.set('trust proxy', env.TRUST_PROXY_HOPS === 0 ? false : env.TRUST_PROXY_HOPS)
 
-app.use(cors({ origin: env.FRONTEND_URL }))
+app.use(cors({ origin: new URL(env.FRONTEND_URL).origin, credentials: true }))
 app.use(express.json({ limit: '1mb' }))
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  res.setHeader('Cache-Control', 'private, no-store')
+  res.setHeader('Content-Security-Policy', `default-src 'none'; base-uri 'none'; frame-ancestors ${new URL(env.FRONTEND_URL).origin}; sandbox`)
+  next()
+})
+app.use('/auth', rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false,
+  store: new AuthRateLimitStore('ip'),
+  message: { code: 'AUTH_RATE_LIMITED', message: 'Muitas tentativas. Aguarde antes de tentar novamente.' } }))
+app.use(['/auth/login', '/auth/register'], rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false,
+  store: new AuthRateLimitStore('account'), keyGenerator: req => String(req.body?.email ?? '').trim().toLowerCase().slice(0, 191),
+  message: { code: 'AUTH_RATE_LIMITED', message: 'Muitas tentativas. Aguarde antes de tentar novamente.' } }))
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 app.use('/api', publicApiRouter)

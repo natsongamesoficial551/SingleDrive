@@ -1,3 +1,4 @@
+import { startGoogleAuth } from '@/lib/google-auth'
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { BrandLogo } from '@/components/drive/BrandLogo'
@@ -9,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { apiFetch } from '@/lib/api'
 import { setAuthSession, type AuthUser } from '@/lib/auth'
 
-type AuthResponse = { accessToken: string; refreshToken: string; user: AuthUser }
+type AuthResponse = { accessToken: string; user: AuthUser }
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -23,8 +24,7 @@ export function LoginPage() {
     setGoogleLoading(true)
     setError('')
     try {
-      const data = await apiFetch<{ url: string }>('/auth/google/url', { skipAuth: true })
-      window.location.href = data.url
+      await startGoogleAuth('login')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google login failed')
       setGoogleLoading(false)
@@ -37,7 +37,7 @@ export function LoginPage() {
     setError('')
     try {
       const data = await apiFetch<AuthResponse>('/auth/login', { method: 'POST', skipAuth: true, body: JSON.stringify({ email, password }) })
-      setAuthSession(data.accessToken, data.refreshToken, data.user)
+      setAuthSession(data.accessToken, data.user)
       navigate('/all-files')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')

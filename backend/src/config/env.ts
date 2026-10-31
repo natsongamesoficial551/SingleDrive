@@ -14,6 +14,7 @@ const envSchema = z.object({
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().default(30),
   MAX_UPLOAD_BYTES: z.coerce.number().default(5 * 1024 * 1024 * 1024),
   RECAPTCHA_SECRET_KEY: z.string().optional(),
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   SYSTEM_ADMIN_USER_ID: z.string().uuid().optional(),
 })
 
