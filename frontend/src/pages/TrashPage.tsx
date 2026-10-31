@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { PageHeader } from '@/components/drive/PageHeader'
 import { apiFetch, formatBytes } from '@/lib/api'
+import { GoogleTrash } from '@/components/drive/GoogleTrash'
 
 type TrashFile = {
   id: string
@@ -11,6 +12,8 @@ type TrashFile = {
   mimeType: string
   sizeBytes: string
   provider: string
+  providerFileId: string
+  connectedAccountId: string
   deletedAt: string
   connectedAccount: {
     email: string
@@ -72,11 +75,12 @@ export function TrashPage() {
         ids.forEach((id) => next.delete(id))
         return next
       })
-      setMessage(`Successfully restored ${ids.length} file(s).`)
+      setMessage(`${ids.length} arquivo(s) restaurado(s).`)
       setMessageType('success')
       window.dispatchEvent(new Event('9drive:storage-changed'))
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Failed to restore files')
+      setMessage(error instanceof Error ? error.message : 'Não foi possível restaurar os arquivos.')
+      void loadTrash()
       setMessageType('error')
     } finally {
       setLoading(false)
@@ -85,7 +89,7 @@ export function TrashPage() {
 
   async function handlePermanentDelete(ids: string[]) {
     if (ids.length === 0) return
-    if (!confirm(`Are you sure you want to permanently delete ${ids.length} file(s)? This action cannot be undone.`)) return
+    if (!confirm(`Excluir permanentemente ${ids.length} arquivo(s)? Esta ação não pode ser desfeita.`)) return
     setLoading(true)
     setMessage('')
     try {
@@ -99,7 +103,7 @@ export function TrashPage() {
         ids.forEach((id) => next.delete(id))
         return next
       })
-      setMessage(`Permanently deleted ${ids.length} file(s).`)
+      setMessage(`${ids.length} arquivo(s) excluído(s) permanentemente.`)
       setMessageType('success')
       window.dispatchEvent(new Event('9drive:storage-changed'))
     } catch (error) {
@@ -113,16 +117,16 @@ export function TrashPage() {
   return (
     <>
       <PageHeader
-        title="Recycle Bin"
-        description="Manage deleted files. Restore them to active folders or delete them permanently."
+        title="Lixeira"
+        description="Gerencie os arquivos removidos do SingleDrive e das contas Google conectadas."
         actions={
           selectedIds.size > 0 ? (
             <>
               <Button variant="outline" onClick={() => handleRestore(Array.from(selectedIds))} disabled={loading}>
-                <RotateCcw className="h-4 w-4" /> Restore Selected ({selectedIds.size})
+                <RotateCcw className="h-4 w-4" /> Restaurar selecionados ({selectedIds.size})
               </Button>
               <Button variant="danger" onClick={() => handlePermanentDelete(Array.from(selectedIds))} disabled={loading}>
-                <Trash2 className="h-4 w-4" /> Delete Selected ({selectedIds.size})
+                <Trash2 className="h-4 w-4" /> Excluir permanentemente ({selectedIds.size})
               </Button>
             </>
           ) : null
@@ -144,8 +148,8 @@ export function TrashPage() {
         {files.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
             <Trash2 className="h-12 w-12 text-slate-400 mb-3" />
-            <p className="text-base font-bold">Trash is empty</p>
-            <p className="text-sm text-slate-500 mt-1">Deleted files will appear here.</p>
+            <p className="text-base font-bold">Nenhum arquivo do SingleDrive nesta lixeira</p>
+            <p className="text-sm text-slate-500 mt-1">As lixeiras das contas Google aparecem abaixo.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -160,11 +164,11 @@ export function TrashPage() {
                       className="rounded border-slate-300"
                     />
                   </th>
-                  <th className="p-4">Name</th>
-                  <th className="p-4">Account</th>
-                  <th className="p-4">Size</th>
-                  <th className="p-4">Deleted At</th>
-                  <th className="p-4 text-right">Actions</th>
+                  <th className="p-4">Nome</th>
+                  <th className="p-4">Conta</th>
+                  <th className="p-4">Tamanho</th>
+                  <th className="p-4">Excluído em</th>
+                  <th className="p-4 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -191,7 +195,7 @@ export function TrashPage() {
                     </td>
                     <td className="p-4 text-sm font-semibold">{formatBytes(file.sizeBytes)}</td>
                     <td className="p-4 text-sm text-slate-500">
-                      {new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(file.deletedAt))}
+                      {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(file.deletedAt))}
                     </td>
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -222,6 +226,7 @@ export function TrashPage() {
           </div>
         )}
       </Card>
+      <GoogleTrash hidden={new Set(files.filter((file) => file.provider === 'google_drive').map((file) => `${file.connectedAccountId}:${file.providerFileId}`))} onRestored={() => { void loadTrash() }} />
     </>
   )
 }

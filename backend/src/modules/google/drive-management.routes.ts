@@ -18,6 +18,29 @@ async function accountDrive(req: AuthRequest) {
   return google.drive({ version: 'v3', auth: await getAuthedGoogleClient(account) })
 }
 
+driveManagementRouter.get('/trash', async (req: AuthRequest, res, next) => {
+  try {
+    const { pageToken } = z.object({ pageToken: z.string().min(1).max(2048).optional() }).parse(req.query)
+    const drive = await accountDrive(req)
+    const result = await drive.files.list({ q: 'trashed = true', fields: 'nextPageToken,files(id,name,mimeType,size,trashedTime,explicitlyTrashed,capabilities(canTrash,canEdit))', pageSize: 100, pageToken, supportsAllDrives: true, includeItemsFromAllDrives: true })
+    return res.json({ items: result.data.files ?? [], nextPageToken: result.data.nextPageToken ?? null })
+  } catch (error) { return next(error) }
+})
+
+driveManagementRouter.post('/items/:fileId/restore', async (req: AuthRequest, res, next) => {
+  try {
+    const fileId = idSchema.parse(req.params.fileId)
+    const accountId = String(req.params.id)
+    const drive = await accountDrive(req)
+    const item = (await drive.files.get({ fileId, fields: 'mimeType,trashed', supportsAllDrives: true })).data
+    if (!item.trashed) return res.status(409).json({ message: 'Este item não está na lixeira do Google Drive.' })
+    if (item.mimeType === 'application/vnd.google-apps.folder') return res.status(409).json({ message: 'Por enquanto, restaure pastas diretamente no Google Drive.' })
+    await drive.files.update({ fileId, requestBody: { trashed: false }, supportsAllDrives: true })
+    await prisma.file.updateMany({ where: { userId: req.user!.id, connectedAccountId: accountId, providerFileId: fileId, status: 'deleted' }, data: { status: 'active', deletedAt: null } })
+    return res.json({ status: 'ok' })
+  } catch (error) { return next(error) }
+})
+
 // O SingleDrive mantém registros próprios para a pasta 9drive; não os remova por fora dessa biblioteca.
 async function isManagedFolderItem(drive: ReturnType<typeof google.drive>, fileId: string) {
   const roots = await drive.files.list({ q: "name = '9drive' and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and trashed = false", fields: 'files(id)', pageSize: 100 })
@@ -49,8 +72,10 @@ driveManagementRouter.post('/items/:fileId/trash', async (req: AuthRequest, res,
   try {
     const fileId = idSchema.parse(req.params.fileId)
     const drive = await accountDrive(req)
-    if (await isManagedFolderItem(drive, fileId)) return res.status(409).json({ message: 'Para manter a biblioteca sincronizada, remova este item pela área Meus arquivos do SingleDrive.' })
+    const item = (await drive.files.get({ fileId, fields: 'mimeType', supportsAllDrives: true })).data
+    if (item.mimeType === 'application/vnd.google-apps.folder' && await isManagedFolderItem(drive, fileId)) return res.status(409).json({ message: 'A remoção de pastas gerenciadas pelo SingleDrive está temporariamente indisponível.' })
     await drive.files.update({ fileId, requestBody: { trashed: true }, supportsAllDrives: true })
+    await prisma.file.updateMany({ where: { userId: req.user!.id, connectedAccountId: String(req.params.id), providerFileId: fileId, status: 'active' }, data: { status: 'deleted', deletedAt: new Date() } })
     return res.json({ status: 'ok' })
   } catch (error) { return next(error) }
 })

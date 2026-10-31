@@ -107,15 +107,16 @@ fileRouter.patch('/batch', async (req: AuthRequest, res, next) => {
 fileRouter.delete('/batch', async (req: AuthRequest, res, next) => {
   try {
     const body = batchFileSchema.parse(req.body)
-    const files = await prisma.file.findMany({ where: { id: { in: body.fileIds }, userId: req.user!.id, status: 'active' } })
-    const result = await prisma.file.updateMany({
-      where: { id: { in: body.fileIds }, userId: req.user!.id, status: 'active' },
-      data: { status: 'deleted', deletedAt: new Date() }
-    })
+    const files = await prisma.file.findMany({ where: { id: { in: body.fileIds }, userId: req.user!.id, status: 'active' }, include: { connectedAccount: true } })
     for (const f of files) {
+      if (f.provider === 'google_drive') {
+        const drive = google.drive({ version: 'v3', auth: await getAuthedGoogleClient(f.connectedAccount) })
+        await drive.files.update({ fileId: f.providerFileId, requestBody: { trashed: true }, supportsAllDrives: true })
+      }
+      await prisma.file.update({ where: { id: f.id }, data: { status: 'deleted', deletedAt: new Date() } })
       await createAuditLog(req.user!.id, 'TRASH_FILE', 'file', f.id, { name: f.name })
     }
-    return res.json({ status: 'ok', deleted: result.count })
+    return res.json({ status: 'ok', deleted: files.length })
   } catch (error) {
     return next(error)
   }
@@ -145,15 +146,16 @@ fileRouter.get('/trash', async (req: AuthRequest, res, next) => {
 fileRouter.post('/batch/restore', async (req: AuthRequest, res, next) => {
   try {
     const body = batchFileSchema.parse(req.body)
-    const files = await prisma.file.findMany({ where: { id: { in: body.fileIds }, userId: req.user!.id, status: 'deleted' } })
-    const result = await prisma.file.updateMany({
-      where: { id: { in: body.fileIds }, userId: req.user!.id, status: 'deleted' },
-      data: { status: 'active', deletedAt: null }
-    })
+    const files = await prisma.file.findMany({ where: { id: { in: body.fileIds }, userId: req.user!.id, status: 'deleted' }, include: { connectedAccount: true } })
     for (const f of files) {
+      if (f.provider === 'google_drive') {
+        const drive = google.drive({ version: 'v3', auth: await getAuthedGoogleClient(f.connectedAccount) })
+        await drive.files.update({ fileId: f.providerFileId, requestBody: { trashed: false }, supportsAllDrives: true })
+      }
+      await prisma.file.update({ where: { id: f.id }, data: { status: 'active', deletedAt: null } })
       await createAuditLog(req.user!.id, 'RESTORE_FILE', 'file', f.id, { name: f.name })
     }
-    return res.json({ status: 'ok', restored: result.count })
+    return res.json({ status: 'ok', restored: files.length })
   } catch (error) {
     return next(error)
   }
@@ -284,7 +286,11 @@ fileRouter.patch('/:id', async (req: AuthRequest, res, next) => {
 fileRouter.post('/:id/share', async (req: AuthRequest, res, next) => {
   try {
     const fileId = String(req.params.id)
-    const file = await prisma.file.findFirstOrThrow({ where: { id: fileId, userId: req.user!.id, status: 'active' } })
+    const file = await prisma.file.findFirstOrThrow({ where: { id: fileId, userId: req.user!.id, status: 'active' }, include: { connectedAccount: true } })
+    if (file.provider === 'google_drive') {
+      const drive = google.drive({ version: 'v3', auth: await getAuthedGoogleClient(file.connectedAccount) })
+      await drive.files.update({ fileId: file.providerFileId, requestBody: { trashed: true }, supportsAllDrives: true })
+    }
     const existingShare = await prisma.fileShare.findFirst({ where: { fileId: file.id, userId: req.user!.id, enabled: true, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }, orderBy: { createdAt: 'desc' } })
 
     let shareId = existingShare?.id
