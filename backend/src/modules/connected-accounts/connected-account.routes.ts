@@ -7,6 +7,7 @@ import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.
 import { decryptText, encryptText, hashToken, randomToken } from '../../utils/crypto.js'
 import { hashPassword } from '../../utils/password.js'
 import { createOAuthClient, syncGoogleQuota } from '../google/google.service.js'
+import { resolveGoogleLoginUser } from '../auth/google-login-user.js'
 import { syncS3Quota, testS3Connection } from '../s3/s3.service.js'
 
 export const connectedAccountRouter = Router()
@@ -192,12 +193,10 @@ connectedAccountRouter.get('/google/callback', async (req, res, next) => {
     if (!providerAccountId || !email) return res.status(400).json({ code: 'GOOGLE_PROFILE_FAILED', message: 'Google profile missing id or email.' })
 
     if (oauthState.flow === 'login') {
+      if (profile.data.verified_email !== true) return res.redirect(`${env.FRONTEND_URL}/google-auth?status=error`)
       const name = profile.data.name || email.split('@')[0] || 'Google User'
-      const user = await prisma.user.upsert({
-        where: { email },
-        create: { email, name, passwordHash: await hashPassword(randomToken(32)) },
-        update: { name },
-      })
+      const user = await resolveGoogleLoginUser(prisma, { email, providerAccountId, name, passwordHash: await hashPassword(randomToken(32)) })
+      if (!user) return res.redirect(`${env.FRONTEND_URL}/google-auth?status=error`)
       const existingAccount = await prisma.connectedAccount.findUnique({ where: { userId_provider_providerAccountId: { userId: user.id, provider: 'google_drive', providerAccountId } } })
       const refreshTokenEncrypted = tokens.refresh_token ? encryptText(tokens.refresh_token) : existingAccount?.refreshTokenEncrypted
       if (!refreshTokenEncrypted) {
