@@ -11,6 +11,7 @@ import { FileGrid } from '@/components/drive/FileGrid'
 import { FileTable } from '@/components/drive/FileTable'
 import { FolderContextMenu } from '@/components/drive/FolderContextMenu'
 import { FolderGrid, type FolderSizeScale } from '@/components/drive/FolderGrid'
+import { GoogleDriveBrowser } from '@/components/drive/GoogleDriveBrowser'
 import { defaultFolderColor, defaultFolderIconUrl, folderColorOptions, folderIconOptions, normalizeFolderColor } from '@/components/drive/FolderVisual'
 import { PageHeader } from '@/components/drive/PageHeader'
 import { Input } from '@/components/ui/input'
@@ -702,6 +703,7 @@ export function AllFilesPage() {
         </div>
       </div>
       {message ? <p className="mt-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-700">{message}</p> : null}
+      {!activeFolder && !searchQuery && <GoogleDriveBrowser accounts={connectedAccounts} />}
       {!activeFolder && (recentFolders.length > 0 ? <FolderGrid items={recentFolders} mobileTwoColumns sizeScale={folderSizeScale} onFolderMenu={openFolderMenu} onFolderOpen={openFolder} onDropItem={handleDropItem} /> : <p className="mt-4 rounded-xl bg-slate-50 p-5 text-sm text-slate-500">Crie pastas para organizar seus projetos, documentos e ideias.</p>)}
       {!activeFolder && moreFolders.length > 0 ? <>
         <h2 className="mt-4 font-extrabold text-slate-700">More Folders</h2>

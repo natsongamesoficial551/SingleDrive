@@ -6,8 +6,9 @@ import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
 import { decryptText, encryptText, hashToken, randomToken } from '../../utils/crypto.js'
 import { hashPassword } from '../../utils/password.js'
-import { createOAuthClient, syncGoogleQuota } from '../google/google.service.js'
+import { createOAuthClient, getAuthedGoogleClient, syncGoogleQuota } from '../google/google.service.js'
 import { resolveGoogleLoginUser } from '../auth/google-login-user.js'
+import { parseGoogleBrowseQuery } from '../google/browse-query.js'
 import { syncS3Quota, testS3Connection } from '../s3/s3.service.js'
 
 export const connectedAccountRouter = Router()
@@ -277,6 +278,30 @@ connectedAccountRouter.get('/google/callback', async (req, res, next) => {
   } catch (error) {
     console.error('Google OAuth callback failed:', error)
     return res.redirect(`${env.FRONTEND_URL}/google-connected?status=error`)
+  }
+})
+
+connectedAccountRouter.get('/:id/browse', requireAuth, async (req: AuthRequest, res, next) => {
+  try {
+    const query = parseGoogleBrowseQuery(req.query)
+    const account = await prisma.connectedAccount.findFirstOrThrow({
+      where: { id: String(req.params.id), userId: req.user!.id, provider: 'google_drive', status: 'connected' },
+    })
+    const auth = await getAuthedGoogleClient(account)
+    const drive = google.drive({ version: 'v3', auth })
+    const response = await drive.files.list({
+      q: query.driveQuery,
+      spaces: 'drive',
+      fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)',
+      pageSize: 100,
+      pageToken: query.pageToken,
+      orderBy: 'folder,name',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    })
+    return res.json({ items: response.data.files ?? [], nextPageToken: response.data.nextPageToken ?? null })
+  } catch (error) {
+    return next(error)
   }
 })
 
