@@ -21,11 +21,24 @@ function logUpload(message: string, metadata?: Record<string, unknown>) {
   console.info('[upload]', message, metadata ?? '')
 }
 
+const quotaSyncs = new Map<string, { startedAt: number; running: boolean }>()
 function syncQuotaInBackground(accountId: string, sessionId: string) {
+  const existing = quotaSyncs.get(accountId)
+  if (existing && (existing.running || Date.now() - existing.startedAt < 60_000)) return
+  quotaSyncs.set(accountId, { startedAt: Date.now(), running: true })
   logUpload('quota sync started', { accountId, sessionId })
   syncGoogleQuota(accountId)
     .then(() => logUpload('quota sync completed', { accountId, sessionId }))
     .catch((error) => logUpload('quota sync failed', { accountId, sessionId, message: error instanceof Error ? error.message : 'Unknown error' }))
+    .finally(() => {
+      const entry = quotaSyncs.get(accountId)
+      if (!entry) return
+      entry.running = false
+      // Não conservar entradas quando a conta deixa de receber uploads.
+      const delay = Math.max(0, 60_000 - (Date.now() - entry.startedAt))
+      const timer = setTimeout(() => { if (quotaSyncs.get(accountId) === entry && !entry.running) quotaSyncs.delete(accountId) }, delay)
+      timer.unref()
+    })
 }
 
 function normalizePriorityAccountIds(value: unknown) {
