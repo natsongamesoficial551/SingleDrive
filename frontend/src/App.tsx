@@ -24,9 +24,11 @@ import { UploadProvider } from '@/context/UploadContext'
 function App() {
   const [ready, setReady] = useState(false)
   const [sessionError, setSessionError] = useState('')
+  const [waitingSeconds, setWaitingSeconds] = useState(0)
   const started = useRef(false)
   async function initializeSession() {
     setSessionError('')
+    setWaitingSeconds(0)
     try { await restoreSession(); setReady(true) }
     catch (error) { setSessionError(error instanceof Error ? error.message : 'Servidor temporariamente indisponível.') }
   }
@@ -35,8 +37,22 @@ function App() {
     started.current = true
     void initializeSession()
   }, [])
+  useEffect(() => {
+    if (ready || sessionError) return
+    const timer = window.setInterval(() => setWaitingSeconds(value => value + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [ready, sessionError])
   if (sessionError) return <main className="p-6"><p>{sessionError}</p><button className="mt-4 underline" onClick={() => void initializeSession()}>Tentar novamente</button></main>
-  if (!ready) return <main className="p-6">Carregando…</main>
+  if (!ready) return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6 text-slate-900">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm" role="status" aria-live="polite">
+        <div className="mx-auto mb-5 h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-teal-600" aria-hidden="true" />
+        <h1 className="text-xl font-bold">{waitingSeconds < 8 ? 'Abrindo seu SingleDrive…' : 'Aguardando o servidor…'}</h1>
+        <p className="mt-3 text-sm text-slate-600">{waitingSeconds < 8 ? 'Verificando sua sessão com segurança.' : 'Após um período sem uso, a hospedagem pode precisar iniciar novamente. Sua sessão não será apagada durante a espera.'}</p>
+        {waitingSeconds >= 90 ? <p className="mt-4 text-sm text-slate-600">Está demorando mais que o esperado. Você pode continuar aguardando ou recarregar a página para tentar novamente.</p> : null}
+      </div>
+    </main>
+  )
   return (
     <UploadProvider>
       <Routes>
