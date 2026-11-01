@@ -23,12 +23,19 @@ import { UploadProvider } from '@/context/UploadContext'
 
 function App() {
   const [ready, setReady] = useState(false)
+  const [sessionError, setSessionError] = useState('')
   const started = useRef(false)
+  async function initializeSession() {
+    setSessionError('')
+    try { await restoreSession(); setReady(true) }
+    catch (error) { setSessionError(error instanceof Error ? error.message : 'Servidor temporariamente indisponível.') }
+  }
   useEffect(() => {
     if (started.current) return
     started.current = true
-    void restoreSession().finally(() => setReady(true))
+    void initializeSession()
   }, [])
+  if (sessionError) return <main className="p-6"><p>{sessionError}</p><button className="mt-4 underline" onClick={() => void initializeSession()}>Tentar novamente</button></main>
   if (!ready) return <main className="p-6">Carregando…</main>
   return (
     <UploadProvider>

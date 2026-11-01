@@ -282,7 +282,12 @@ export function SettingsPage() {
       }).catch(() => undefined)
     }
     window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
+    const channel = 'BroadcastChannel' in window ? new BroadcastChannel('sd:storage') : null
+    if (channel) channel.onmessage = event => {
+      if (event.data?.type !== 'GOOGLE_CONNECTED' || event.data.status !== 'success') return
+      load().then(() => window.dispatchEvent(new Event('9drive:storage-changed'))).catch(() => undefined)
+    }
+    return () => { window.removeEventListener('message', onMessage); channel?.close() }
   }, [])
 
   async function connectDrive() {

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
+import { refreshStaleQuotas } from './quota-refresh.js'
 
 export const storageRouter = Router()
 storageRouter.use(requireAuth)
@@ -30,6 +31,7 @@ async function getOrCreateRoutingPolicy(userId: string) {
 
 storageRouter.get('/summary', async (req: AuthRequest, res, next) => {
   try {
+    await refreshStaleQuotas(req.user!.id)
     const accounts = await prisma.connectedAccount.findMany({ where: { userId: req.user!.id, status: 'connected' }, include: { storageAccount: true } })
     const summary = accounts.reduce((acc, account) => {
       const storage = account.storageAccount

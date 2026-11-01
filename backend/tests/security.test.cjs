@@ -15,7 +15,7 @@ const { encryptText, randomToken, hashToken } = require('../dist/utils/crypto.js
 const { signAccessToken } = require('../dist/utils/jwt.js')
 const { createS3Client } = require('../dist/modules/s3/s3.service.js')
 const { google } = require('googleapis')
-let server, base, config, a, b, permissionWrites = 0, tokenExchanges = 0, uploads = 0
+let server, base, config, a, b, permissionWrites = 0, tokenExchanges = 0, uploads = 0, quotaReads = 0
 const profiles = new Map()
 const originalFetch = global.fetch
 const originalDrive = google.drive
@@ -80,7 +80,7 @@ before(async () => {
   }
   proto.revokeToken = async () => ({ data: {} })
   google.drive = () => ({
-    about: { get: async () => ({ data: { storageQuota: { limit: '99999999', usage: '0' } } }) },
+    about: { get: async () => { quotaReads++; await new Promise(resolve => setTimeout(resolve, 15)); return { data: { storageQuota: { limit: '99999999', usage: '0' } } } } },
     files: {
       list: async () => ({ data: { files: [{ id: 'app-root', name: '9drive' }] } }),
       get: async () => ({ data: { webViewLink: 'https://drive.google.com/mock-private-link' } }),
@@ -336,4 +336,39 @@ test('overrides de dependências preservam geração ZIP e leitura de configura�
   assert.equal(Buffer.concat(chunks).subarray(0, 2).toString(), 'PK')
   const { deepmerge } = await import('deepmerge-ts')
   assert.deepEqual(deepmerge({ nested: { a: 1 } }, { nested: { b: 2 } }), { nested: { a: 1, b: 2 } })
+})
+
+test('quatro contas e consultas de sessão não esgotam o orçamento de login', async () => {
+  const owner = await register('multi-owner@example.test')
+  for (let i = 0; i < 4; i++) await connect(owner, `multi-${i}@example.test`, 'full')
+  for (let i = 0; i < 65; i++) assert.equal((await request('/auth/me', { token: owner.accessToken })).status, 200)
+  let cookie = owner.cookie
+  for (let i = 0; i < 65; i++) {
+    const renewed = await request('/auth/refresh', { method: 'POST', cookie, body: {} })
+    assert.equal(renewed.status, 200)
+    cookie = renewed.headers.get('set-cookie').split(';')[0]
+  }
+  assert.equal((await request('/auth/login', { method: 'POST', body: { email: owner.user.email, password: 'Senha-local-teste-123!' } })).status, 200)
+})
+
+test('logins válidos não consomem o limite de tentativas malsucedidas', async () => {
+  const owner = await register('valid-logins@example.test')
+  for (let i = 0; i < 15; i++) assert.equal((await request('/auth/login', { method: 'POST', body: { email: owner.user.email, password: 'Senha-local-teste-123!' } })).status, 200)
+})
+
+test('cotas de quatro contas atualizam sem recarregar, compartilham consultas e respeitam ownership', async () => {
+  const owner = await register('quota-owner@example.test')
+  const accounts = []
+  for (let i = 0; i < 4; i++) accounts.push(await connect(owner, `quota-${i}@example.test`))
+  await prisma.storageAccount.updateMany({ where: { connectedAccountId: { in: accounts.map(account => account.id) } }, data: { totalBytes: 1n, availableBytes: 1n, lastSyncedAt: new Date(0) } })
+  const before = quotaReads
+  const [summary, list] = await Promise.all([request('/storage/summary', { token: owner.accessToken }), request('/connected-accounts', { token: owner.accessToken })])
+  assert.equal(summary.status, 200); assert.equal(list.status, 200)
+  assert.equal(summary.data.availableBytes, String(4 * 99999999))
+  assert.equal(list.data.accounts.length, 4)
+  assert.equal(quotaReads - before, 4)
+  await request('/storage/summary', { token: owner.accessToken })
+  assert.equal(quotaReads - before, 4, 'cotas recentes devem usar o snapshot do banco')
+  const other = await request('/storage/summary', { token: b.accessToken })
+  assert.ok(other.data.accounts.every(account => !accounts.some(own => own.id === account.id)))
 })

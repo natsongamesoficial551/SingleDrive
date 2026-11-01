@@ -50,7 +50,7 @@ export function QuotaTrackerPage() {
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([])
   const [routingPolicy, setRoutingPolicy] = useState<RoutingPolicy>({ mode: 'most_available', priorityAccountIds: [], roundRobinCursor: 0 })
   const [message, setMessage] = useState('')
-  const [autoRefresh, setAutoRefresh] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [syncingAccountId, setSyncingAccountId] = useState<string | null>(null)
 
@@ -68,7 +68,12 @@ export function QuotaTrackerPage() {
   async function refresh() {
     setRefreshing(true)
     try {
+      const results = await Promise.allSettled(accounts.map(account => apiFetch(`/connected-accounts/${account.id}/sync-quota`, { method: 'POST' })))
       await load()
+      window.dispatchEvent(new Event('9drive:storage-changed'))
+      setMessage(results.some(result => result.status === 'rejected') ? 'Algumas contas não responderam. Os últimos valores foram preservados.' : '')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Não foi possível atualizar o espaço.')
     } finally {
       setRefreshing(false)
     }
@@ -80,7 +85,9 @@ export function QuotaTrackerPage() {
 
   useEffect(() => {
     if (!autoRefresh) return
-    const timer = window.setInterval(() => load().catch(() => undefined), 35_000)
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'hidden') load().catch(() => undefined)
+    }, 60_000)
     return () => window.clearInterval(timer)
   }, [autoRefresh])
 
@@ -103,6 +110,7 @@ export function QuotaTrackerPage() {
     try {
       await apiFetch(`/connected-accounts/${accountId}/sync-quota`, { method: 'POST' })
       await load()
+      window.dispatchEvent(new Event('9drive:storage-changed'))
     } finally {
       setSyncingAccountId(null)
     }

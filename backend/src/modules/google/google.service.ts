@@ -47,7 +47,7 @@ export async function syncGoogleQuota(accountId: string) {
   const account = await prisma.connectedAccount.findUniqueOrThrow({ where: { id: accountId } })
   const auth = await getAuthedGoogleClient(account)
   const drive = google.drive({ version: 'v3', auth })
-  const about = await drive.about.get({ fields: 'storageQuota,user' })
+  const about = await drive.about.get({ fields: 'storageQuota,user' }, { timeout: 8000, retry: false })
   const quota = about.data.storageQuota
   const total = quota?.limit ? BigInt(quota.limit) : null
   const used = quota?.usage ? BigInt(quota.usage) : 0n

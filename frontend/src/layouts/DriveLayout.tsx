@@ -350,8 +350,34 @@ export function DriveLayout() {
       .catch(() => undefined)
     loadSidebarStats().catch(() => undefined)
     loadConnectedAccounts().catch(() => undefined)
-    window.addEventListener('9drive:storage-changed', loadSidebarStats)
-    return () => window.removeEventListener('9drive:storage-changed', loadSidebarStats)
+    let updating = false
+    const refreshStorage = async () => {
+      if (updating || document.visibilityState === 'hidden') return
+      updating = true
+      try { await Promise.all([loadSidebarStats(), loadConnectedAccounts()]) }
+      catch { /* Manter os últimos valores em falhas temporárias. */ }
+      finally { updating = false }
+    }
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin === window.location.origin && event.data?.type === 'GOOGLE_CONNECTED' && event.data.status === 'success') void refreshStorage()
+    }
+    window.addEventListener('9drive:storage-changed', refreshStorage)
+    window.addEventListener('focus', refreshStorage)
+    window.addEventListener('message', onMessage)
+    const channel = 'BroadcastChannel' in window ? new BroadcastChannel('sd:storage') : null
+    if (channel) channel.onmessage = event => {
+      if (event.data?.type === 'GOOGLE_CONNECTED' && event.data.status === 'success') void refreshStorage()
+    }
+    document.addEventListener('visibilitychange', refreshStorage)
+    const timer = window.setInterval(refreshStorage, 60_000)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('9drive:storage-changed', refreshStorage)
+      window.removeEventListener('focus', refreshStorage)
+      window.removeEventListener('message', onMessage)
+      channel?.close()
+      document.removeEventListener('visibilitychange', refreshStorage)
+    }
   }, [])
 
   useEffect(() => {

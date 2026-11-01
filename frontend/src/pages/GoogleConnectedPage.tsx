@@ -12,6 +12,12 @@ export function GoogleConnectedPage() {
   useEffect(() => {
     window.opener?.postMessage({ type: 'GOOGLE_CONNECTED', status }, window.location.origin)
     if (!ok) return
+    // O Google pode separar o popup do opener por COOP; o canal é da mesma origem.
+    if ('BroadcastChannel' in window) {
+      const channel = new BroadcastChannel('sd:storage')
+      channel.postMessage({ type: 'GOOGLE_CONNECTED', status })
+      channel.close()
+    }
     const timer = window.setTimeout(() => {
       if (window.opener) window.close()
       else navigate('/settings')

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card } from '@/components/ui/card'
 import { apiFetch, restoreSession } from '@/lib/api'
-import { setAuthSession, type AuthUser } from '@/lib/auth'
+import { getAccessToken, setAuthSession, type AuthUser } from '@/lib/auth'
 import { consumeGoogleFlow } from '@/lib/google-auth'
 
 export function GoogleAuthPage() {
@@ -18,7 +18,7 @@ export function GoogleAuthPage() {
       const state = params.get('state'), code = params.get('code')
       if (!state || !code) throw new Error('A autorização falhou. Inicie novamente.')
       const pending = consumeGoogleFlow(state)
-      if (pending.flow === 'connect' && !(await restoreSession())) throw new Error('Entre novamente antes de conectar o Drive.')
+      if (pending.flow === 'connect' && !getAccessToken() && !(await restoreSession())) throw new Error('Entre novamente antes de conectar o Drive.')
       const data = await apiFetch<{ accessToken?: string; user?: AuthUser; status?: string }>('/auth/google/complete', {
         method: 'POST', skipAuth: pending.flow === 'login', retry: false,
         body: JSON.stringify({ state, code, verifier: pending.verifier }),

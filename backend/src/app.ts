@@ -31,11 +31,17 @@ app.use((_req, res, next) => {
   res.setHeader('Content-Security-Policy', `default-src 'none'; base-uri 'none'; frame-ancestors ${new URL(env.FRONTEND_URL).origin}; sandbox`)
   next()
 })
-app.use('/auth', rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false,
-  store: new AuthRateLimitStore('ip'),
+// Consultas /me e rotação de sessão não são tentativas de login.
+// Manter o orçamento de entradas OAuth separado das tentativas de senha.
+app.use(['/auth/google/start', '/auth/google/complete'], rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false,
+  store: new AuthRateLimitStore('oauth-ip-v2'),
+  message: { code: 'AUTH_RATE_LIMITED', message: 'Muitas tentativas. Aguarde antes de tentar novamente.' } }))
+app.use(['/auth/login', '/auth/register'], rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false,
+  store: new AuthRateLimitStore('password-ip-v2'), skipSuccessfulRequests: true,
   message: { code: 'AUTH_RATE_LIMITED', message: 'Muitas tentativas. Aguarde antes de tentar novamente.' } }))
 app.use(['/auth/login', '/auth/register'], rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false,
   store: new AuthRateLimitStore('account'), keyGenerator: req => String(req.body?.email ?? '').trim().toLowerCase().slice(0, 191),
+  skipSuccessfulRequests: true,
   message: { code: 'AUTH_RATE_LIMITED', message: 'Muitas tentativas. Aguarde antes de tentar novamente.' } }))
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))

@@ -6,13 +6,14 @@ import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
 import { decryptText, encryptText, hashToken, randomToken } from '../../utils/crypto.js'
 import { hashPassword } from '../../utils/password.js'
-import { createOAuthClient, getAuthedGoogleClient, syncGoogleQuota } from '../google/google.service.js'
+import { createOAuthClient, getAuthedGoogleClient } from '../google/google.service.js'
 import { syncS3Quota, testS3Connection } from '../s3/s3.service.js'
 
 import { googleCallback } from '../auth/oauth.service.js'
 
 import { parseGoogleBrowseQuery } from '../google/browse-query.js'
 import { driveManagementRouter } from '../google/drive-management.routes.js'
+import { refreshAccountQuota, refreshStaleQuotas } from '../storage/quota-refresh.js'
 
 export const connectedAccountRouter = Router()
 connectedAccountRouter.use('/:id/drive', requireAuth, driveManagementRouter)
@@ -29,30 +30,19 @@ const s3ConnectSchema = z.object({
 })
 
 async function syncQuotaForAccount(account: { id: string; provider: string }) {
-  if (account.provider === 's3') return syncS3Quota(account.id)
-  return syncGoogleQuota(account.id)
+  return refreshAccountQuota(account)
 }
 
 connectedAccountRouter.get('/', requireAuth, async (req: AuthRequest, res, next) => {
   try {
+    await refreshStaleQuotas(req.user!.id)
     const accounts = await prisma.connectedAccount.findMany({
       where: { userId: req.user!.id, status: 'connected' },
       include: { storageAccount: true },
       orderBy: { createdAt: 'desc' },
     })
-    const missingQuota = accounts.filter((account) => !account.storageAccount?.lastSyncedAt)
-    for (const account of missingQuota) await syncQuotaForAccount(account).catch(() => undefined)
-
-    const syncedAccounts = missingQuota.length > 0
-      ? await prisma.connectedAccount.findMany({
-        where: { userId: req.user!.id, status: 'connected' },
-        include: { storageAccount: true },
-        orderBy: { createdAt: 'desc' },
-      })
-      : accounts
-
     return res.json({
-      accounts: syncedAccounts.map(({ accessTokenEncrypted: _a, refreshTokenEncrypted: _r, storageAccount, ...account }) => ({
+      accounts: accounts.map(({ accessTokenEncrypted: _a, refreshTokenEncrypted: _r, storageAccount, ...account }) => ({
         ...account,
         storageAccount: storageAccount ? {
           ...storageAccount,
