@@ -1,9 +1,8 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
-import { API_URL, apiFetch } from '@/lib/api'
-import { getAccessToken } from '@/lib/auth'
+import { apiFetch, apiFetchRaw } from '@/lib/api'
 
 export type UploadProgressStatus = 'uploading' | 'done' | 'error' | 'partial'
-export type UploadProgressFile = { name: string; size: number; percent: number; status: UploadProgressStatus }
+export type UploadProgressFile = { name: string; size: number; percent: number; status: UploadProgressStatus; error?: string }
 export type UploadProgressState = { open: boolean; fileName: string; percent: number; status: UploadProgressStatus; files: UploadProgressFile[] }
 
 type ResumableSession = { sessionId: string; file: File; folderId?: string | null; targetAccountId?: string | null }
@@ -28,7 +27,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
   const [resumableSessions, setResumableSessions] = useState<Record<string, ResumableSession>>({})
 
   async function uploadSingleFileResumable(file: File, folderId: string | null, onProgress: (percent: number) => void, sessionIdToRetry?: string, targetAccountId?: string | null) {
-    const CHUNK_SIZE = 5 * 1024 * 1024 // 5MB chunks (must be multiple of 256KB for Google Drive)
+    const CHUNK_SIZE = 3 * 1024 * 1024 // múltiplo de 256 KiB, compatível com o proxy
     let sessionId = sessionIdToRetry || ''
     let startOffset = 0
 
@@ -51,6 +50,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         })
       })
       sessionId = initData.sessionId
+      if (initData.provider !== 'google_drive') throw new Error('Uploads grandes para S3 ainda não são suportados. Selecione uma conta Google Drive.')
       // Update session with the active sessionId
       setResumableSessions(prev => ({
         ...prev,
@@ -63,6 +63,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         onProgress(100)
         return
       }
+      if (statusData.status !== 'uploading') throw new Error('Não foi possível retomar este envio. Inicie um novo upload.')
     }
 
     // 2. Upload chunk by chunk
@@ -71,19 +72,14 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       const chunk = file.slice(startOffset, endOffset)
 
       // We use raw fetch with authorization header for binary stream upload
-      const response = await fetch(`${API_URL}/uploads/resumable/chunk/${sessionId}`, {
+      const response = await apiFetchRaw(`/uploads/resumable/chunk/${sessionId}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${getAccessToken()}`,
           'Content-Range': `bytes ${startOffset}-${endOffset - 1}/${file.size}`,
-          'Content-Length': String(chunk.size)
+          'Content-Type': 'application/octet-stream'
         },
         body: chunk
       })
-
-      if (!response.ok) {
-        throw new Error('Chunk upload failed')
-      }
 
       const resData = await response.json() as { status: string; offset?: string }
       if (resData.status === 'completed') {
@@ -91,7 +87,10 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         break
       }
 
-      startOffset = Number(resData.offset)
+      const nextOffset = Number(resData.offset)
+      if (!Number.isSafeInteger(nextOffset) || nextOffset <= startOffset || nextOffset > endOffset) throw new Error('O servidor retornou uma posição de upload inválida. Tente novamente.')
+      if (nextOffset === file.size) throw new Error('O Google ainda não confirmou a conclusão. Use tentar novamente para verificar o arquivo.')
+      startOffset = nextOffset
       const percent = Math.min(99, Math.round((startOffset / file.size) * 100))
       onProgress(percent)
     }
@@ -132,7 +131,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         setUploadProgress((current) => {
           const nextFiles = [...current.files]
           if (nextFiles[i]) {
-            nextFiles[i] = { ...nextFiles[i], status: 'error' }
+            nextFiles[i] = { ...nextFiles[i], status: 'error', error: err instanceof Error ? err.message : 'Não foi possível enviar o arquivo.' }
           }
           return {
             ...current,
@@ -142,6 +141,8 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         })
       }
     }
+
+    setUploadProgress(current => ({ ...current, status: current.files.every(file => file.status === 'done') ? 'done' : 'partial' }))
 
     // Dispatch global events so active pages reload their data
     window.dispatchEvent(new Event('9drive:storage-changed'))
@@ -153,7 +154,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     if (!session) return
 
     setUploadProgress((current) => {
-      const nextFiles = current.files.map(f => f.name === fileName ? { ...f, status: 'uploading' as const } : f)
+      const nextFiles = current.files.map(f => f.name === fileName ? { ...f, status: 'uploading' as const, error: undefined } : f)
       return {
         ...current,
         status: 'uploading',
@@ -185,7 +186,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error('Retry upload failed:', fileName, err)
       setUploadProgress((current) => {
-        const nextFiles = current.files.map(f => f.name === fileName ? { ...f, status: 'error' as const } : f)
+        const nextFiles = current.files.map(f => f.name === fileName ? { ...f, status: 'error' as const, error: err instanceof Error ? err.message : 'Não foi possível enviar o arquivo.' } : f)
         return {
           ...current,
           status: 'partial',

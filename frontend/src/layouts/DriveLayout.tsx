@@ -565,6 +565,7 @@ export function DriveLayout() {
                       <div className="h-1.5 rounded-full bg-slate-200">
                         <div className={file.status === 'error' ? 'h-full rounded-full bg-red-500' : file.status === 'done' ? 'h-full rounded-full bg-emerald-500' : 'h-full rounded-full bg-blue-600'} style={{ width: `${file.percent}%` }} />
                       </div>
+                      {file.error ? <p className="mt-1 text-xs text-red-600" role="alert">{file.error}</p> : null}
                     </div>
                   ))}
                 </div>

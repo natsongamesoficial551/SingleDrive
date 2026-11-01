@@ -10,6 +10,7 @@ import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.
 import { ensureGoogleAppFolder, getAuthedGoogleClient, syncGoogleQuota } from '../google/google.service.js'
 import { buildS3ObjectKey, getS3ConfigForAccount, syncS3Quota, uploadS3Object } from '../s3/s3.service.js'
 import { createAuditLog } from '../../utils/audit.js'
+import type { UploadSession } from '@prisma/client'
 
 export const uploadRouter = Router()
 
@@ -299,6 +300,22 @@ uploadRouter.post('/', requireAuth, handleUpload)
 
 // Resumable upload endpoints
 
+async function finishGoogleUpload(session: UploadSession, accountId: string, metadata: { id: string; name?: string; mimeType?: string }) {
+  const file = await prisma.$transaction(async tx => {
+    // Serializa a conclusão concorrente e evita registrar o mesmo envio duas vezes.
+    const claimed = await tx.uploadSession.updateMany({ where: { id: session.id, userId: session.userId, status: 'uploading' }, data: { status: 'completed', completedAt: new Date() } })
+    const existing = await tx.file.findFirst({ where: { providerFileId: metadata.id, connectedAccountId: accountId, userId: session.userId } })
+    if (existing) return existing
+    if (!claimed.count) throw new Error('A sessão de upload já foi concluída ou cancelada.')
+    return tx.file.create({ data: { userId: session.userId, connectedAccountId: accountId, folderId: session.folderId,
+      provider: 'google_drive', providerFileId: metadata.id, name: metadata.name || session.fileName,
+      mimeType: metadata.mimeType || session.mimeType, sizeBytes: session.sizeBytes } })
+  })
+  await createAuditLog(session.userId, 'UPLOAD_FILE', 'file', file.id, { name: file.name, size: file.sizeBytes.toString() })
+  syncQuotaInBackground(accountId, session.id)
+  return file
+}
+
 // 1. Initialize resumable session
 uploadRouter.post('/resumable/init', requireAuth, async (req: AuthRequest, res, next) => {
   try {
@@ -327,18 +344,7 @@ uploadRouter.post('/resumable/init', requireAuth, async (req: AuthRequest, res, 
     if (!account) return res.status(400).json({ code: 'NO_ACCOUNT_WITH_ENOUGH_SPACE', message: 'No connected storage account has enough space.' })
 
     if (account.provider !== 'google_drive') {
-      const session = await prisma.uploadSession.create({
-        data: {
-          userId: req.user!.id,
-          targetConnectedAccountId: account.id,
-          folderId,
-          fileName: body.fileName,
-          mimeType: body.mimeType,
-          sizeBytes,
-          status: 'uploading'
-        }
-      })
-      return res.status(201).json({ sessionId: session.id, provider: account.provider, offset: 0 })
+      return res.status(400).json({ code: 'UNSUPPORTED_PROVIDER', message: 'Envio retomável para S3 ainda não está disponível. Selecione uma conta Google Drive.' })
     }
 
     const auth = await getAuthedGoogleClient(account)
@@ -405,6 +411,7 @@ uploadRouter.get('/resumable/status/:id', requireAuth, async (req: AuthRequest, 
     if (session.status === 'completed') {
       return res.json({ status: 'completed', offset: session.sizeBytes.toString() })
     }
+    if (session.status !== 'uploading') return res.status(409).json({ code: 'UPLOAD_SESSION_CLOSED', message: 'Esta sessão de upload foi encerrada. Inicie um novo envio.' })
 
     if (!session.googleSessionUri || !session.targetConnectedAccountId) {
       return res.json({ status: 'uploading', offset: '0' })
@@ -423,7 +430,8 @@ uploadRouter.get('/resumable/status/:id', requireAuth, async (req: AuthRequest, 
 
     const queryRes = await fetch(session.googleSessionUri, {
       method: 'PUT',
-      headers: queryHeaders
+      headers: queryHeaders,
+      redirect: 'manual',
     })
 
     if (queryRes.status === 308) {
@@ -434,13 +442,17 @@ uploadRouter.get('/resumable/status/:id', requireAuth, async (req: AuthRequest, 
         const lastByte = BigInt(parts[1])
         return res.json({ status: 'uploading', offset: (lastByte + 1n).toString() })
       }
+      return res.json({ status: 'uploading', offset: '0' })
     } else if (queryRes.ok) {
+      const fileMeta = await queryRes.json() as { id?: string; name?: string; mimeType?: string }
+      if (!fileMeta.id) throw new Error('Google não retornou o identificador do arquivo concluído.')
+      await finishGoogleUpload(session, account.id, { ...fileMeta, id: fileMeta.id })
       return res.json({ status: 'completed', offset: session.sizeBytes.toString() })
     }
 
-    return res.json({ status: 'uploading', offset: '0' })
+    return res.status(502).json({ code: 'UPLOAD_STATUS_UNAVAILABLE', message: 'Não foi possível consultar o progresso no Google Drive.' })
   } catch (error) {
-    return res.json({ status: 'failed', offset: '0' })
+    return next(error)
   }
 })
 
@@ -473,7 +485,6 @@ uploadRouter.put('/resumable/chunk/:id', requireAuth, async (req: AuthRequest, r
       where: { id: session.targetConnectedAccountId, userId: req.user!.id }
     })
     const auth = await getAuthedGoogleClient(account)
-    const drive = google.drive({ version: 'v3', auth })
     const token = await auth.getAccessToken()
 
     // Stream chunk body from client to Google Drive resumable URI
@@ -484,58 +495,36 @@ uploadRouter.put('/resumable/chunk/:id', requireAuth, async (req: AuthRequest, r
 
     const putRes = await fetch(session.googleSessionUri, {
       method: 'PUT',
-      redirect: 'error',
+      redirect: 'manual',
       headers: putHeaders,
       body: req as any,
       duplex: 'half'
     } as any)
 
     if (putRes.status === 308) {
-      return res.json({ status: 'uploading', offset: (endByte + 1n).toString() })
+      const range = putRes.headers.get('range')
+      const acknowledged = range?.match(/^bytes=0-(\d+)$/)
+      const offset = acknowledged ? BigInt(acknowledged[1]) + 1n : 0n
+      if (offset <= startByte || offset > endByte + 1n) return res.status(502).json({ code: 'UPLOAD_OFFSET_INVALID', message: 'O Google não confirmou o recebimento do trecho. Tente novamente.' })
+      return res.json({ status: 'uploading', offset: offset.toString() })
     }
 
     if (putRes.ok) {
       // Completed! Parse metadata
       const fileMeta = await putRes.json() as { id: string; name: string; mimeType: string }
 
-      let existingFile = await prisma.file.findFirst({
-        where: { providerFileId: fileMeta.id, userId: req.user!.id }
-      })
-
-      if (!existingFile) {
-        existingFile = await prisma.file.create({
-          data: {
-            userId: req.user!.id,
-            connectedAccountId: account.id,
-            folderId: session.folderId,
-            provider: 'google_drive',
-            providerFileId: fileMeta.id,
-            name: fileMeta.name || session.fileName,
-            mimeType: fileMeta.mimeType || session.mimeType,
-            sizeBytes: totalBytes
-          }
-        })
-      }
-
-      await prisma.uploadSession.update({
-        where: { id: session.id },
-        data: { status: 'completed', completedAt: new Date() }
-      })
-
-      await createAuditLog(req.user!.id, 'UPLOAD_FILE', 'file', existingFile.id, { name: existingFile.name, size: existingFile.sizeBytes.toString() })
-
-      syncQuotaInBackground(account.id, session.id)
+      if (!fileMeta.id) throw new Error('Google não retornou o identificador do arquivo concluído.')
+      const existingFile = await finishGoogleUpload(session, account.id, fileMeta)
 
       return res.status(201).json({ status: 'completed', file: { ...existingFile, sizeBytes: existingFile.sizeBytes.toString() } })
     }
 
     const errorMsg = await putRes.text()
-    await prisma.uploadSession.update({
-      where: { id: session.id },
-      data: { status: 'failed', errorMessage: errorMsg }
-    })
-
-    return res.status(putRes.status).json({ code: 'UPLOAD_FAILED', message: errorMsg })
+    // Erros temporários permitem consultar novamente a posição recebida pelo Google.
+    if (putRes.status >= 400 && putRes.status < 500 && putRes.status !== 408 && putRes.status !== 429) {
+      await prisma.uploadSession.update({ where: { id: session.id }, data: { status: 'failed', errorMessage: errorMsg.slice(0, 1000) } })
+    }
+    return res.status(502).json({ code: 'UPLOAD_FAILED', message: 'O Google Drive não aceitou o trecho. Tente novamente e verifique o espaço disponível.' })
   } catch (error) {
     return next(error)
   }

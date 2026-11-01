@@ -202,7 +202,7 @@ test('upload resumível valida dono, tamanho e estado sem criar ACL pública', a
   const savedFetch = global.fetch
   global.fetch = async (url, options) => {
     if (String(url) === session.googleSessionUri) {
-      assert.equal(options.redirect, 'error')
+      assert.equal(options.redirect, 'manual')
       assert.equal(options.headers.get('content-length'), '3')
       let size = 0
       for await (const chunk of options.body) size += chunk.length
@@ -217,6 +217,37 @@ test('upload resumível valida dono, tamanho e estado sem criar ACL pública', a
     assert.equal((await prisma.uploadSession.findUniqueOrThrow({ where: { id: session.id } })).status, 'completed')
     assert.equal((await request(path, { method: 'PUT', token: a.accessToken, headers: { 'Content-Range': 'bytes 0-2/3' } })).status, 400)
     assert.equal(permissionWrites, 0)
+  } finally { global.fetch = savedFetch }
+})
+
+test('upload retomável respeita retorno 308, arquivo JSON e recuperação após resposta perdida', async () => {
+  const account = await connect(a, 'resumable-retry@example.test')
+  const session = await prisma.uploadSession.create({ data: { userId: a.user.id, targetConnectedAccountId: account.id, fileName: 'dados.json', mimeType: 'application/json', sizeBytes: 4n, status: 'uploading', googleSessionUri: 'https://www.googleapis.com/upload/drive/v3/files?upload_id=resume-test' } })
+  const path = `/uploads/resumable/chunk/${session.id}`
+  const savedFetch = global.fetch
+  let calls = 0
+  global.fetch = async (url, options) => {
+    if (String(url) !== session.googleSessionUri) return savedFetch(url, options)
+    assert.equal(options.redirect, 'manual')
+    calls++
+    if (options.body) {
+      let data = ''
+      for await (const chunk of options.body) data += chunk.toString()
+      assert.equal(data, '{"')
+      return new Response(null, { status: 308, headers: { range: 'bytes=0-1' } })
+    }
+    return Response.json({ id: 'recovered-google-id', name: 'dados.json', mimeType: 'application/json' })
+  }
+  try {
+    const first = await originalFetch(base + path, { method: 'PUT', headers: { Origin: origin, Authorization: `Bearer ${a.accessToken}`, 'Content-Range': 'bytes 0-1/4', 'Content-Type': 'application/json' }, body: '{"' })
+    assert.equal(first.status, 200, await first.clone().text())
+    assert.equal((await first.json()).offset, '2')
+    const status = await request(`/uploads/resumable/status/${session.id}`, { token: a.accessToken })
+    assert.equal(status.status, 200)
+    assert.equal(status.data.status, 'completed')
+    assert.equal((await prisma.uploadSession.findUniqueOrThrow({ where: { id: session.id } })).status, 'completed')
+    assert.equal(await prisma.file.count({ where: { userId: a.user.id, providerFileId: 'recovered-google-id' } }), 1)
+    assert.equal(calls, 2)
   } finally { global.fetch = savedFetch }
 })
 test('cookie HttpOnly rotaciona; token JSON, origem alheia e refresh repetido são recusados', async () => {

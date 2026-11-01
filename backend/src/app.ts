@@ -23,7 +23,12 @@ app.disable('x-powered-by')
 app.set('trust proxy', env.TRUST_PROXY_HOPS === 0 ? false : env.TRUST_PROXY_HOPS)
 
 app.use(cors({ origin: new URL(env.FRONTEND_URL).origin, credentials: true }))
-app.use(express.json({ limit: '1mb' }))
+const parseJson = express.json({ limit: '1mb' })
+app.use((req, res, next) => {
+  // O corpo de trechos é binário mesmo quando o arquivo original é JSON.
+  if (req.method === 'PUT' && /^\/uploads\/resumable\/chunk\/[^/]+\/?$/.test(req.path)) return next()
+  return parseJson(req, res, next)
+})
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'no-referrer')
