@@ -1,9 +1,7 @@
 name: Manter API ativa
 
 on:
-  schedule:
-    # Fora dos minutos redondos para reduzir disputa na fila do GitHub.
-    - cron: '3,13,23,33,43,53 * * * *'
+  # Somente diagnóstico manual. O ping periódico roda no Netlify.
   workflow_dispatch:
 
 # O ping não precisa ler o repositório nem acessar credenciais.

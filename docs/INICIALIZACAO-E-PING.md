@@ -4,6 +4,18 @@ Data: 01/11/2026.
 
 ## Diagnóstico e configuração
 
+### Correção do agendador em 01/11/2026
+
+O GitHub estava ativo, mas o histórico consultado apresentou somente a execução manual de 00:46 e uma execução agendada de 07:49 (horário de Brasília). Isso não manteve a API ativa a cada dez minutos. A execução manual bem-sucedida não era prova de pontualidade do cron.
+
+O agendamento periódico foi transferido para `frontend/functions/keep-api-warm.mjs`, função agendada do Netlify a cada cinco minutos. `netlify.toml` define `functions` relativo ao base `frontend`. O workflow do GitHub fica disponível apenas para diagnóstico manual, evitando agendamentos duplicados.
+
+A função usa destino HTTPS fixo, bloqueia redirects, aplica timeout de vinte segundos e valida o JSON de saúde. Não possui credenciais, entradas de usuário ou dependências adicionais. Na primeira partida a frio pode expirar enquanto o Render inicia; a próxima execução verifica novamente. Logs registram duração e sucesso/falha, sem tokens. A publicação em produção é necessária para ativar o schedule; execuções e horário seguinte devem ser confirmados em Netlify > Functions > keep-api-warm. Funções agendadas não podem ser invocadas por URL pública.
+
+O agendamento consome a franquia de Functions do Netlify. Continua sujeito à disponibilidade e às quotas de Netlify/Render; não impede reinícios, deploys ou suspensão por limite mensal.
+
+O texto abaixo descreve a configuração anterior do GitHub e suas limitações; o schedule nele citado foi substituído pela função Netlify.
+
 Render Free suspende web services após 15 minutos sem tráfego de entrada. A próxima requisição inicia novamente a instância, processo que a documentação estima em cerca de um minuto. O frontend aguardava a restauração de sessão antes de mostrar as rotas, exibindo apenas “Carregando…”. O tempo relatado de 90 a 180 segundos é compatível com partida a frio, mas não houve acesso aos logs desse incidente para atribuir cada segundo a Render, Neon ou rede.
 
 O Neon também suspende compute após cinco minutos de inatividade. Sua documentação descreve retomada rápida na próxima consulta. Pingar somente o banco não acordaria uma API Render suspensa. Manter o banco ativo continuamente aumenta consumo de compute sem demonstrar que resolveria a espera principal.
@@ -28,3 +40,4 @@ A tela inicial passa a explicar a espera após oito segundos e a demora prolonga
 - https://render.com/docs/free
 - https://neon.com/docs/introduction/scale-to-zero
 - https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule
+- https://docs.netlify.com/build/functions/scheduled-functions/
