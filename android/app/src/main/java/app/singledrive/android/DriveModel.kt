@@ -151,9 +151,14 @@ class DriveModel(app: Application) : AndroidViewModel(app) {
     fun syncAccount(a: DriveAccount) = action { api.call("connected-accounts/${a.id}/sync-quota", "POST"); refresh() }
     fun disconnect(a: DriveAccount) = action { api.call("connected-accounts/${a.id}", "DELETE"); refresh() }
     fun logout() = action {
-        api.call("auth/logout", "POST")
+        var revoked = true
+        try { api.call("auth/logout", "POST") }
+        catch (e: CancellationException) { throw e }
+        catch (_: Exception) { revoked = false }
         transferJob?.cancelAndJoin(); refreshJob?.cancelAndJoin()
         api.clear(); user = null; files = emptyList(); folders = emptyList(); accounts = emptyList(); path = emptyList(); resumable = false
+        withContext(Dispatchers.IO) { File(getApplication<Application>().cacheDir, "open").listFiles()?.forEach { it.delete() } }
+        if (!revoked) message = "Sessão removida deste aparelho. Não foi possível confirmar a revogação no servidor."
     }
     fun cancelTransfer() { transferJob?.cancel() }
     private fun startTransfer(label: String, block: suspend () -> Unit) {

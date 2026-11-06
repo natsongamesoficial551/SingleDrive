@@ -139,7 +139,7 @@ class MainActivity : ComponentActivity() {
                         open = { file -> vm.openFile(file) { uri, mime ->
                             try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
-                            catch (_: android.content.ActivityNotFoundException) { vm.message = "Nenhum aplicativo instalado abre esse tipo de arquivo. Use Salvar no dispositivo." }
+                            catch (_: android.content.ActivityNotFoundException) { error("Nenhum aplicativo instalado abre esse tipo de arquivo. Use Salvar no dispositivo.") }
                         } }, download = { file -> pendingDownload = file; save.launch(file.name) })
                     1 -> AccountsScreen(vm, false) { full -> vm.google(true, full, ::browser) }
                     3 -> AccountsScreen(vm, true) { full -> vm.google(true, full, ::browser) }

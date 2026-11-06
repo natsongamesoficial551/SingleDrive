@@ -32,17 +32,19 @@ class ApiTest {
     private fun session(token: String) = json("accessToken" to token, "user" to json("id" to "test-user"))
 
     @Test fun expiredTokenRotatesOnceAndRetriesWithNewToken() = runBlocking {
+        val renewedToken = "test-access-token-never-persisted"
         api.accept(session("expired"))
         server.enqueue(MockResponse().setResponseCode(401))
-        server.enqueue(MockResponse().setBody(session("fresh").toString()).addHeader("Set-Cookie", "__Host-sd_refresh=rotated; Path=/; Secure; HttpOnly"))
+        server.enqueue(MockResponse().setBody(session(renewedToken).toString()).addHeader("Set-Cookie", "__Host-sd_refresh=rotated; Path=/; Secure; HttpOnly"))
         server.enqueue(MockResponse().setBody("{\"files\":[]}"))
         assertEquals(0, api.call("files").rows("files").size)
         assertEquals("Bearer expired", server.takeRequest().getHeader("Authorization"))
         assertEquals("/auth/refresh", server.takeRequest().path)
         val retried = server.takeRequest()
-        assertEquals("Bearer fresh", retried.getHeader("Authorization"))
+        assertEquals("Bearer $renewedToken", retried.getHeader("Authorization"))
         assertEquals("__Host-sd_refresh=rotated", retried.getHeader("Cookie"))
-        assertFalse(store.read().toString().contains("fresh"))
+        assertFalse(store.read().toString().contains(renewedToken))
+        assertFalse(store.read().has("accessToken"))
     }
     @Test fun invalidSessionClearsCredentialsAndDoesNotRetryOperation() = runBlocking {
         api.accept(session("expired"))
