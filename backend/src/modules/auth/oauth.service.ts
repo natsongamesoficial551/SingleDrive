@@ -8,9 +8,10 @@ import { encryptText, hashToken, randomToken } from '../../utils/crypto.js'
 import { hashPassword } from '../../utils/password.js'
 import { createOAuthClient, syncGoogleQuota } from '../google/google.service.js'
 import { setRefreshCookie } from './session.service.js'
+import { normalizeOAuthFlow, oauthReturnTarget, persistedOAuthFlow } from './oauth-client.js'
 
 export const oauthRouter = Router()
-const challengeSchema = z.object({ codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/), accessMode: z.enum(['essential', 'full']).default('essential') })
+const challengeSchema = z.object({ codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/), accessMode: z.enum(['essential', 'full']).default('essential'), client: z.enum(['web', 'android']).default('web') })
 const completeSchema = z.object({ state: z.string().regex(/^[A-Za-z0-9_-]{43}$/), code: z.string().min(1).max(4096), verifier: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
 
 // A pasta do aplicativo pode ser gerida sem conceder acesso a todo o Drive.
@@ -20,13 +21,13 @@ export function googleScopesForMode(mode: string) {
 }
 
 async function start(req: AuthRequest, res: Response, flow: 'login' | 'connect') {
-  const { codeChallenge, accessMode } = challengeSchema.parse(req.body)
+  const { codeChallenge, accessMode, client: appClient } = challengeSchema.parse(req.body)
   // Login verifica identidade; acesso ao Drive é uma autorização separada.
   if (flow === 'login' && accessMode !== 'essential') return res.status(400).json({ code: 'GOOGLE_MODE_INVALID', message: 'Escolha acesso completo nas configurações após entrar.' })
   const config = await prisma.providerConfig.findFirstOrThrow({ where: { userId: null, provider: 'google_drive', status: 'active' }, orderBy: { createdAt: 'desc' } })
   const state = randomToken()
   await prisma.oauthState.create({ data: {
-    providerConfigId: config.id, flow, stateHash: hashToken(state), codeChallenge, accessMode,
+    providerConfigId: config.id, flow: persistedOAuthFlow(flow, appClient), stateHash: hashToken(state), codeChallenge, accessMode,
     userId: flow === 'connect' ? req.user!.id : null,
     sessionId: flow === 'connect' ? req.user!.sessionId : null,
     expiresAt: new Date(Date.now() + 10 * 60_000),
@@ -48,7 +49,7 @@ export async function googleCallback(req: Request, res: Response) {
   const state = await prisma.oauthState.findUnique({ where: { stateHash: hashToken(query.data.state) } })
   if (!state || state.usedAt || state.expiresAt <= new Date()) return res.redirect(`${env.FRONTEND_URL}/google-auth#status=error`)
   const fragment = new URLSearchParams({ code: query.data.code, state: query.data.state })
-  return res.redirect(`${env.FRONTEND_URL}/google-auth#${fragment}`)
+  return res.redirect(`${oauthReturnTarget(state.flow, env.FRONTEND_URL)}#${fragment}`)
 }
 
 export function completeGoogleLogin(createSession: (userId: string, req: AuthRequest) => Promise<{ accessToken: string; refreshToken: string }>) {
@@ -59,8 +60,9 @@ export function completeGoogleLogin(createSession: (userId: string, req: AuthReq
       const challenge = Buffer.from(hashToken(body.verifier), 'hex').toString('base64url')
       if (!state || state.usedAt || state.expiresAt <= new Date() || state.codeChallenge !== challenge || state.providerConfig.status !== 'active')
         return res.status(401).json({ code: 'GOOGLE_FLOW_INVALID', message: 'Inicie novamente a autorização neste navegador.' })
-      if (state.flow !== 'login' && state.flow !== 'connect') return res.status(401).json({ code: 'GOOGLE_FLOW_INVALID', message: 'Fluxo inválido.' })
-      if (state.flow === 'connect') {
+      const flow = normalizeOAuthFlow(state.flow)
+      if (!flow) return res.status(401).json({ code: 'GOOGLE_FLOW_INVALID', message: 'Fluxo inválido.' })
+      if (flow === 'connect') {
         // Não aceitar apenas o verifier: a sessão autenticada iniciadora também deve continuar válida.
         let authenticated = false
         await requireAuth(req, res, () => { authenticated = true })
@@ -78,7 +80,7 @@ export function completeGoogleLogin(createSession: (userId: string, req: AuthReq
       if (!profile?.sub || !profile.email || profile.email_verified !== true) return res.status(403).json({ code: 'GOOGLE_IDENTITY_INVALID', message: 'O Google precisa verificar o endereço de e-mail.' })
       const email = profile.email.trim().toLowerCase()
       let user
-      if (state.flow === 'login') {
+      if (flow === 'login') {
         user = await prisma.user.findUnique({ where: { googleSubject: profile.sub } })
         if (!user) {
           // Nunca reaproveitar um cadastro por coincidência de e-mail.
@@ -101,7 +103,7 @@ export function completeGoogleLogin(createSession: (userId: string, req: AuthReq
         user = await prisma.user.findUniqueOrThrow({ where: { id: state.userId! } })
       }
       if (user.status !== 'active') return res.status(403).json({ code: 'ACCOUNT_REVIEW_REQUIRED', message: 'A conta exige revisão de segurança.' })
-      if (state.flow === 'login') {
+      if (flow === 'login') {
         const { accessToken, refreshToken } = await createSession(user.id, req)
         setRefreshCookie(res, refreshToken)
         return res.json({ accessToken, user: { id: user.id, name: user.name, email: user.email } })
