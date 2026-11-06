@@ -1,0 +1,53 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+      - 'backend/src/modules/auth/oauth*.ts'
+      - 'backend/tests/android-oauth.test.cjs'
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+      - 'backend/src/modules/auth/oauth*.ts'
+      - 'backend/tests/android-oauth.test.cjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compilar, testar e verificar Android
+        working-directory: android
+        run: bash gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --no-daemon --max-workers=2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SingleDrive-Android-teste
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Android-validacao
+          path: |
+            android/app/build/reports/tests/
+            android/app/build/reports/lint-results-debug.*
+          retention-days: 14
