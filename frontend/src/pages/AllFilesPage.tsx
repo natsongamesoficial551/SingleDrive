@@ -7,10 +7,9 @@ import { DummyModal } from '@/components/drive/DummyModal'
 import { EmptyAreaContextMenu } from '@/components/drive/EmptyAreaContextMenu'
 import { FileContextMenu } from '@/components/drive/FileContextMenu'
 import { FileDetailsDrawer } from '@/components/drive/FileDetailsDrawer'
-import { FileGrid } from '@/components/drive/FileGrid'
-import { FileTable } from '@/components/drive/FileTable'
+import { LibraryContents } from '@/components/drive/LibraryContents'
 import { FolderContextMenu } from '@/components/drive/FolderContextMenu'
-import { FolderGrid, type FolderSizeScale } from '@/components/drive/FolderGrid'
+import { type FolderSizeScale } from '@/components/drive/FolderGrid'
 import { GoogleDriveBrowser } from '@/components/drive/GoogleDriveBrowser'
 import { defaultFolderColor, defaultFolderIconUrl, folderColorOptions, folderIconOptions, normalizeFolderColor } from '@/components/drive/FolderVisual'
 import { PageHeader } from '@/components/drive/PageHeader'
@@ -687,30 +686,32 @@ export function AllFilesPage() {
         </div>
       </div>
       {message ? <p className="mt-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-700">{message}</p> : null}
-      <section className="mt-6" aria-label="Pastas desta localização">
-        <h2 className="sd-section-title">{activeFolder ? 'Subpastas' : 'Suas pastas'}</h2>
-        <p className="mt-1 text-xs text-slate-500">Clique em uma pasta para entrar. Clique em um arquivo para visualizar; segure ou use a caixa para selecionar.</p>
-        {folders.length > 0 ? <FolderGrid items={folders} mobileTwoColumns sizeScale={folderSizeScale} onFolderMenu={openFolderMenu} onFolderOpen={openFolder} onDropItem={handleDropItem} /> : <p className="mt-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Nenhuma subpasta aqui. Os novos backups do agente atualizado aparecem em Backups de PCs.</p>}
-      </section>
-      {!activeFolder && !searchQuery && <details className="mt-6 rounded-2xl border border-slate-200 p-4"><summary className="cursor-pointer text-sm font-bold text-slate-600">Explorar arquivos originais das contas Google Drive</summary><GoogleDriveBrowser accounts={connectedAccounts} /></details>}
       <div className="mt-4 flex flex-col gap-2 sm:mt-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-3"><h2 className="sd-section-title">Arquivos desta pasta</h2>{selectedFileIds.size > 0 ? <div className="flex w-full flex-col gap-3 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-3 sm:w-auto sm:flex-row sm:items-center sm:border-0 sm:bg-transparent sm:p-0"><span className="text-sm font-extrabold text-slate-700">{selectedFileIds.size} selected</span><div className="grid grid-cols-4 gap-2 sm:flex sm:gap-3"><Button className="w-full" variant="outline" onClick={downloadBatchAsZip}><Download className="h-4 w-4" />ZIP</Button><Button className="w-full" variant="outline" onClick={() => setMoveOpen(true)}><FolderInput className="h-4 w-4" />Move</Button><Button className="w-full" variant="danger" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />Delete</Button><Button className="w-full" variant="ghost" onClick={clearSelection}>Clear</Button></div></div> : null}</div>
+        <div className="flex flex-wrap items-center gap-3"><h2 className="sd-section-title" id="library-title">Biblioteca de arquivos</h2>{selectedFileIds.size > 0 ? <div className="flex w-full flex-col gap-3 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-3 sm:w-auto sm:flex-row sm:items-center sm:border-0 sm:bg-transparent sm:p-0"><span className="text-sm font-extrabold text-slate-700">{selectedFileIds.size} selected</span><div className="grid grid-cols-4 gap-2 sm:flex sm:gap-3"><Button className="w-full" variant="outline" onClick={downloadBatchAsZip}><Download className="h-4 w-4" />ZIP</Button><Button className="w-full" variant="outline" onClick={() => setMoveOpen(true)}><FolderInput className="h-4 w-4" />Move</Button><Button className="w-full" variant="danger" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />Delete</Button><Button className="w-full" variant="ghost" onClick={clearSelection}>Clear</Button></div></div> : null}</div>
         <div className="flex gap-3"><Button variant={fileViewMode === 'grid' ? 'soft' : 'outline'} size="icon" aria-label="Exibir em grade" aria-pressed={fileViewMode === 'grid'} onClick={() => changeFileViewMode('grid')}><LayoutGrid className="h-5 w-5" /></Button><Button variant={fileViewMode === 'list' ? 'soft' : 'outline'} size="icon" aria-label="Exibir em lista" aria-pressed={fileViewMode === 'list'} onClick={() => changeFileViewMode('list')}><List className="h-5 w-5" /></Button></div>
       </div>
       {cutFolder ? <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-700"><ClipboardPaste className="mr-2 inline h-4 w-4" />Cut folder: {cutFolder.name}. Press Ctrl+V or right-click empty area to paste here.</p> : null}
-      {files.length === 0 ? (
+      <section aria-labelledby="library-title">
+      <nav aria-label="Caminho na biblioteca" className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <button className="font-semibold text-blue-600 hover:underline" onClick={closeFolder}>Biblioteca</button>
+        {folderBreadcrumbs.map(folder => <span key={folder.id} className="flex items-center gap-2"><span className="text-slate-400">/</span><button className="font-semibold hover:underline" onClick={() => folder.id && openFolderById(folder.id)}>{folder.name}</button></span>)}
+      </nav>
+      <p className="mt-2 text-xs text-slate-500">Pastas primeiro, em ordem alfabética. Clique para abrir e navegar.</p>
+      {files.length === 0 && folders.length === 0 ? (
         <Card className="sd-empty mt-3">
           <div className="sd-empty-icon"><Upload className="h-7 w-7" /></div><h2>{searchQuery ? 'Nenhum resultado' : 'Seu próximo projeto começa aqui'}</h2><p className="text-sm text-slate-500">{searchQuery ? `No files found for "${searchQuery}".` : activeFolder ? 'Esta pasta ainda esta vazia.' : 'Envie seu primeiro arquivo. O SingleDrive encontra espaço nas suas contas conectadas.'}</p><Button className="mt-5" onClick={() => setUploadOpen(true)}><Upload className="h-4 w-4" />Enviar arquivos</Button>
         </Card>
       ) : (
         <Card className="mt-3 p-4 sm:p-5 bg-white/10 backdrop-blur-sm border border-white/20 dark:bg-transparent dark:border-0 dark:p-0 dark:shadow-none">
-          {fileViewMode === 'grid' ? (
-            <FileGrid files={files} selectedFileIds={selectedFileIds} sizeScale={folderSizeScale} onToggleFile={toggleFileSelection} onOpenFile={(file) => void viewFile(file)} onFileContextMenu={openContext} />
-          ) : (
-            <FileTable files={files} selectedFileIds={selectedFileIds} allSelected={allVisibleSelected} onToggleFile={toggleFileSelection} onToggleAll={toggleAllVisibleFiles} onOpenFile={(file) => void viewFile(file)} onFileContextMenu={openContext} />
-          )}
+          <LibraryContents folders={folders} files={files} mode={fileViewMode} sizeScale={folderSizeScale}
+            selectedFileIds={selectedFileIds} allSelected={allVisibleSelected}
+            onFolderOpen={openFolder} onFolderMenu={openFolderMenu} onDropItem={handleDropItem}
+            onFileOpen={file => void viewFile(file)} onFileMenu={openContext}
+            onToggleFile={toggleFileSelection} onToggleAll={toggleAllVisibleFiles} />
         </Card>
       )}
+      </section>
+      {!activeFolder && !searchQuery && <details className="mt-6 rounded-2xl border border-slate-200 p-4"><summary className="cursor-pointer text-sm font-bold text-slate-600">Explorar arquivos originais das contas Google Drive</summary><GoogleDriveBrowser accounts={connectedAccounts} /></details>}
       </div>
       <EmptyAreaContextMenu x={emptyContextMenu.x} y={emptyContextMenu.y} open={emptyContextMenu.open} canPasteFolder={Boolean(cutFolder)} onClose={() => setEmptyContextMenu({ x: 0, y: 0, open: false })} onUpload={() => { setUploadOpen(true); setEmptyContextMenu({ x: 0, y: 0, open: false }) }} onCreateFolder={() => { setFolderOpen(true); setEmptyContextMenu({ x: 0, y: 0, open: false }) }} onPasteFolder={() => { pasteFolder().catch((error) => setMessage(error instanceof Error ? error.message : 'Failed to paste folder')); setEmptyContextMenu({ x: 0, y: 0, open: false }) }} />
       <FileContextMenu x={contextMenu.x} y={contextMenu.y} file={contextMenu.file} onClose={() => setContextMenu({ x: 0, y: 0, file: null })} onView={() => void viewFile()} onDownload={downloadFile} onRename={() => { setRenameValue(activeFile?.name ?? ''); setRenameOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onMove={() => { setMoveOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onDetails={() => { setDetailOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onShare={shareFile} onCopyLink={copyShareLinkDirect} onInvite={inviteToFile} onDelete={() => { setDeleteOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} />
