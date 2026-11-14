@@ -1,36 +1,39 @@
-# SingleDrive Backup para Windows — primeiro protótipo
+# SingleDrive Desktop para Windows
 
-Este projeto produz um aplicativo Windows que envia automaticamente arquivos de uma pasta local para a conta SingleDrive existente. O usuário entra com Google no navegador do sistema. O aplicativo não acessa o banco de dados diretamente.
+Aplicativo .NET 8 com site em janela e agente de backup na bandeja. Usa a mesma conta Google e as mesmas APIs do site. Não distribui credenciais do banco ou segredos OAuth.
 
-## Executar
-
-1. Compile com .NET SDK 8 no Windows:
-
-   ```powershell
-   dotnet run --project desktop/SingleDrive.Backup/SingleDrive.Backup.csproj
-   ```
-
-2. Informe a URL pública da API (por padrão, `https://singledrive.onrender.com`), clique em **Entrar com Google**, conclua o consentimento no navegador, escolha uma pasta e clique em **Iniciar backup**. O backend atualizado precisa estar publicado para reconhecer o cliente desktop.
-
-Para gerar um `.exe` independente do runtime .NET instalado no PC:
+## Compilar e testar
 
 ```powershell
-dotnet publish desktop/SingleDrive.Backup/SingleDrive.Backup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o desktop/publish
+dotnet publish desktop/SingleDrive.Desktop/SingleDrive.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o desktop/SingleDrive.Desktop/publish/v0.3.0
+dotnet run --project desktop/SingleDrive.PathTests/SingleDrive.PathTests.csproj
 ```
 
-O executável resultante fica em `desktop/publish/SingleDrive.Backup.exe`. O diretório `desktop/publish` é artefato local e não deve ser versionado.
+Execute SingleDrive.Desktop.exe, abra o agente, entre com Google e selecione a pasta. Backend atualizado e migrações aplicadas são necessários. API de produção: https://singledrive.pages.dev/api/.
 
-## Comportamento e limites
+## Vínculo e organização
 
-- Faz uma varredura ao iniciar e outra a cada dois minutos. Arquivos modificados nos últimos cinco segundos aguardam a próxima varredura.
-- Salva o catálogo de tamanho e data de modificação em `%LOCALAPPDATA%/SingleDrive/backup-state.json`. O cookie de renovação da sessão fica protegido por DPAPI para o usuário atual do Windows em `settings.json`; o token de acesso fica apenas em memória.
-- Ignora links simbólicos e pontos de junção para não sair da pasta selecionada. Arquivos sem permissão de leitura são ignorados.
-- Não apaga cópias remotas quando um arquivo local é excluído.
-- Nesta versão, os arquivos são enviados para a raiz da biblioteca com o nome original. A estrutura de subpastas **não é preservada**. Arquivos homônimos de pastas diferentes podem aparecer como cópias com o mesmo nome.
-- Modificações geram novos uploads; ainda não existe vínculo estável nem histórico de versões próprio. Não use este protótipo como única cópia de segurança.
-- O envio atual usa multipart em uma requisição. Arquivos grandes ainda não contam com retomada automática; o endpoint retomável do backend será integrado na próxima etapa.
-- O aplicativo só faz backup enquanto estiver aberto. Não há serviço, bandeja, início automático, restauração em lote ou instalador assinado nesta etapa.
+- Até cinco vínculos ativos por conta. Sessões revogadas/expiradas liberam vagas. Após formatar, revogue o PC antigo no site; o catálogo permanece na conta.
+- Estrutura no Drive e no site: `9drive/Backups de PCs/Computador - identificador/Pasta - identificador/subpastas`. Identificadores curtos distinguem origens homônimas.
+- Upload envia o folderId correto. A árvore usa uma conta Google; falta de espaço causa falha e nova tentativa, sem troca silenciosa de conta.
+- Varredura inicial e a cada dois minutos. Arquivos alterados nos últimos cinco segundos aguardam. Pastas vazias e arquivos vazios também ficam no catálogo; pastas são criadas no Drive, arquivos vazios são recriados na restauração.
+- Catálogo remoto com caminhos, origem e SHA-256 criptografados com AES-256-GCM. Catálogo local e cookie de renovação protegidos com DPAPI em `%LOCALAPPDATA%/SingleDrive/*.bin`. Access token apenas em memória.
+- Ignora links/junções. Exclusões locais preservam cópias remotas; a restauração pode incluir arquivos já excluídos localmente.
+- Modificações geram novos uploads; catálogo aponta a última cópia de cada caminho, sem interface de versões.
+- A primeira varredura desta versão reenvia arquivos de catálogos locais antigos sem IDs, para criar estrutura e catálogo remoto. Cópias antigas espalhadas na raiz permanecem preservadas, pois não há informação suficiente para movê-las com segurança.
 
-## Próxima etapa
+## Restaurar após formatar
 
-Criar no backend recursos de dispositivo, origem, item e versão de backup, além de finalização idempotente de upload. Em seguida, preservar caminhos relativos, retomar uploads e implementar restauração. O schema e as migrações precisam cobrir MySQL local e PostgreSQL de produção.
+1. Execute esta versão e entre na mesma conta Google. Revogue o vínculo antigo no site se necessário e repita o vínculo.
+2. Pause o backup e clique em Restaurar backup no agente.
+3. Escolha o computador/pasta de origem pelo caminho original.
+4. Confirme o destino sugerido ou escolha outra pasta. Documentos, Área de Trabalho, Imagens, Música, Vídeos e perfil são resolvidos pelo Windows atual, inclusive pastas redirecionadas. Caminhos externos mantêm a unidade quando disponível; sem ela, a sugestão usa Documentos.
+5. Subpastas são recriadas. Downloads passam por tamanho/SHA-256 e renomeação local antes de ocupar o caminho final. Arquivos existentes são ignorados e contabilizados, sem sobrescrita. Caminhos absolutos, traversal, ADS, nomes reservados e destinos com links/junções são recusados.
+
+O catálogo remoto funciona após perder as configurações locais ou revogar o PC de origem. Requer acesso aos arquivos e à conta Google que os armazena. Não recupera arquivos apagados permanentemente no provedor.
+
+## Limitações e validação
+
+Upload multipart ainda não retoma arquivos parcialmente enviados. O agente precisa estar executando; há bandeja e início automático opcional, sem serviço Windows ou instalador assinado. Não preserva ACLs NTFS, fluxos alternativos ou consistência de arquivos abertos. Pastas sem permissão são ignoradas. Falta de espaço/falha interrompe a restauração e preserva arquivos já concluídos.
+
+Testes automatizados cobrem contratos HTTP com Prisma simulado, limite de vínculos, isolamento, catálogo, caminhos e preservação de arquivos existentes. O ciclo completo com Google e backup real ainda precisa ser validado em uma conta de teste.

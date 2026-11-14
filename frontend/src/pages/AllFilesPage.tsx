@@ -159,6 +159,8 @@ export function AllFilesPage() {
     if (maxSize) params.set('maxSize', maxSize)
     if (startDate) params.set('startDate', startDate)
     if (endDate) params.set('endDate', endDate)
+    // Sem busca, navegar na raiz mostra somente os arquivos desta pasta.
+    if (!activeFolderId && !searchQuery && !kind && !accountId && !minSize && !maxSize && !startDate && !endDate) params.set('root', '1')
 
     const query = params.toString()
     const path = query ? `/files?${query}` : '/files'

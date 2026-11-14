@@ -34,13 +34,20 @@ desktopDeviceRouter.post('/register', async (req: AuthRequest, res, next) => {
     const session = await prisma.userSession.findUniqueOrThrow({ where: { id: req.user!.sessionId } })
     // Uma sessÃ£o de site/APK nÃ£o se transforma implicitamente em credencial do PC.
     if (session.client !== 'desktop') return res.status(403).json({ code: 'DESKTOP_SESSION_REQUIRED', message: 'Entre com Google pelo aplicativo Windows para vincular este PC.' })
-    const existing = await prisma.desktopDevice.findUnique({ where: { sessionId: session.id } })
-    if (existing?.revokedAt) return res.status(403).json({ code: 'DEVICE_REVOKED', message: 'O vÃ­nculo deste PC foi revogado.' })
-    const device = await prisma.desktopDevice.upsert({
-      where: { sessionId: session.id },
-      create: { ...body, userId: req.user!.id, sessionId: session.id, sourceNames: [] },
-      update: { ...body, lastSeenAt: new Date() },
-    })
+    const device = await prisma.$transaction(async tx => {
+      // O UPDATE trava a linha do usuário até o commit, serializando vínculos concorrentes.
+      await tx.user.update({ where: { id: req.user!.id }, data: { updatedAt: new Date() } })
+      const existing = await tx.desktopDevice.findUnique({ where: { sessionId: session.id } })
+      if (existing?.revokedAt) return null
+      if (!existing && await tx.desktopDevice.count({ where: { userId: req.user!.id, revokedAt: null,
+        session: { revokedAt: null, expiresAt: { gt: new Date() } } } }) >= 5) return null
+      return tx.desktopDevice.upsert({
+        where: { sessionId: session.id },
+        create: { ...body, userId: req.user!.id, sessionId: session.id, sourceNames: [] },
+        update: { ...body, lastSeenAt: new Date() },
+      })
+    }, { isolationLevel: 'ReadCommitted' })
+    if (!device) return res.status(409).json({ code: 'DEVICE_LIMIT_REACHED', message: 'Sua conta permite até 5 computadores. Revogue um vínculo antigo na página Computadores e tente novamente.' })
     return res.json({ device: serialize(device, session) })
   } catch (error) { return next(error) }
 })

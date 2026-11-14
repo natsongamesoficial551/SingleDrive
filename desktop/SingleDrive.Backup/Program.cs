@@ -38,11 +38,12 @@ internal sealed class BackupForm : Form
     private bool exitRequested;
     private bool toggling;
     private bool scanCompleted;
+    private bool restoring;
     private Task? backupTask;
     private readonly NotifyIcon tray;
     private readonly System.Windows.Forms.Timer heartbeatTimer = new() { Interval = 30_000 };
     private readonly System.Windows.Forms.Timer openTimer = new() { Interval = 500 };
-    private string StatePath => Path.Combine(Path.GetDirectoryName(settingsPath)!, $"backup-{accountId}.bin");
+    private string StatePath => Path.Combine(Path.GetDirectoryName(settingsPath)!, $"backup-v3-{accountId}.bin");
     private readonly Dictionary<string, FileStamp> sent = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? cancellation;
 
@@ -51,7 +52,7 @@ internal sealed class BackupForm : Form
         http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies, UseCookies = true }) { Timeout = TimeSpan.FromMinutes(30) };
         Text = "SingleDrive Backup";
         Width = 630;
-        Height = 350;
+        Height = 410;
         StartPosition = FormStartPosition.CenterScreen;
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("Abrir SingleDrive", null, (_, _) => DesktopAgent.OpenWebsite());
@@ -94,6 +95,9 @@ internal sealed class BackupForm : Form
         row.Controls.Add(choose);
         panel.Controls.Add(row);
         panel.Controls.Add(toggle);
+        var restore = new Button { Text = "Restaurar backup", Width = 160 };
+        restore.Click += async (_, _) => { restore.Enabled = false; try { restoring = true; await RestoreAsync(); } catch (Exception ex) { status.Text = $"Restauração interrompida: {ex.Message}"; } finally { restoring = false; restore.Enabled = true; } };
+        panel.Controls.Add(restore);
         panel.Controls.Add(status);
         panel.Controls.Add(new Label { Text = "Envios automáticos a cada 2 minutos. Exclusões locais não apagam arquivos remotos.", AutoSize = true });
         var startup = new CheckBox { Text = "Iniciar agente ao entrar no Windows", AutoSize = true };
@@ -129,7 +133,7 @@ internal sealed class BackupForm : Form
 
     private async Task ToggleAsync()
     {
-        if (toggling) return;
+        if (toggling || restoring) return;
         toggling = true;
         toggle.Enabled = false;
         try {
@@ -156,7 +160,7 @@ internal sealed class BackupForm : Form
 
     private async Task StartBackupAsync()
     {
-        if (cancellation is not null || accountId is null || !localConsent || !Directory.Exists(folder.Text)) return;
+        if (restoring || cancellation is not null || accountId is null || !localConsent || !Directory.Exists(folder.Text)) return;
         sent.Clear();
         try
         {
@@ -189,13 +193,43 @@ internal sealed class BackupForm : Form
         await scanLock.WaitAsync(token);
         try
         {
+            RestorePaths.CheckParents(root);
+            var description = RestorePaths.Describe(root);
+            using var registeredRoot = await AgentRequestAsync("backups/roots", HttpMethod.Post, new {
+                name = new DirectoryInfo(root).Name, machine = Environment.MachineName, originalPath = root,
+                anchor = description.Anchor, suffix = description.Suffix });
+            var rootId = registeredRoot.RootElement.GetProperty("id").GetString();
+            var backupFolder = await EnsureFolderAsync("Backups de PCs", null);
+            var computerFolder = await EnsureFolderAsync($"{Environment.MachineName} - {deviceId![..8]}", backupFolder);
+            var rootName = new DirectoryInfo(root).Name;
+            var remoteRoot = await EnsureFolderAsync($"{rootName[..Math.Min(rootName.Length, 240)]} - {rootId![..8]}", computerFolder);
+            var remoteFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [""] = remoteRoot };
+            async Task<string> RemoteDirectory(string relative)
+            {
+                if (remoteFolders.TryGetValue(relative, out var cached)) return cached;
+                var separator = relative.LastIndexOf('/');
+                var parent = separator < 0 ? "" : relative[..separator];
+                var name = separator < 0 ? relative : relative[(separator + 1)..];
+                var id = await EnsureFolderAsync(name, await RemoteDirectory(parent));
+                remoteFolders[relative] = id; return id;
+            }
             var attempted = 0;
             var uploaded = 0;
+            foreach (var directory in EnumerateFiles(root, true))
+            {
+                token.ThrowIfCancellationRequested();
+                var relativeDirectory = Path.GetRelativePath(root, directory).Replace('\\', '/');
+                await RemoteDirectory(relativeDirectory);
+                var directoryKey = root + "|directory|" + relativeDirectory;
+                if (sent.ContainsKey(directoryKey)) continue;
+                using var recorded = await AgentRequestAsync($"backups/{rootId}/entries", HttpMethod.Post, new { relativePath = relativeDirectory, kind = "directory" });
+                sent[directoryKey] = new FileStamp(-1, 0);
+            }
             foreach (var path in EnumerateFiles(root))
             {
                 token.ThrowIfCancellationRequested();
                 var info = new FileInfo(path);
-                if (!info.Exists || info.Length == 0 || DateTime.UtcNow - info.LastWriteTimeUtc < TimeSpan.FromSeconds(5)) continue;
+                if (!info.Exists || DateTime.UtcNow - info.LastWriteTimeUtc < TimeSpan.FromSeconds(5)) continue;
                 var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
                 var identity = root + "|" + relative;
                 var stamp = new FileStamp(info.Length, info.LastWriteTimeUtc.Ticks);
@@ -205,7 +239,20 @@ internal sealed class BackupForm : Form
                 SetStatus($"Enviando {relative} ({attempted} tentativa(s) nesta varredura)");
                 try
                 {
-                    await UploadAsync(baseUri, path, stamp, token);
+                    if (stamp.Size == 0) {
+                        using var empty = await AgentRequestAsync($"backups/{rootId}/entries", HttpMethod.Post,
+                            new { relativePath = relative, kind = "empty", modifiedUtc = new DateTime(stamp.ModifiedTicks, DateTimeKind.Utc).ToString("O") });
+                        sent[identity] = stamp; await SaveStateAsync(token); uploaded++; continue;
+                    }
+                    var relativeParent = relative.Contains('/') ? relative[..relative.LastIndexOf('/')] : "";
+                    var remoteParent = await RemoteDirectory(relativeParent);
+                    var fileId = await UploadAsync(baseUri, path, stamp, remoteParent, token);
+                    await using var hashStream = File.OpenRead(path);
+                    var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, token)).ToLowerInvariant();
+                    var current = new FileInfo(path);
+                    if (current.Length != stamp.Size || current.LastWriteTimeUtc.Ticks != stamp.ModifiedTicks) throw new IOException("Arquivo mudou durante a conferência.");
+                    using var saved = await AgentRequestAsync($"backups/{rootId}/entries", HttpMethod.Post,
+                        new { relativePath = relative, fileId, sha256, modifiedUtc = new DateTime(stamp.ModifiedTicks, DateTimeKind.Utc).ToString("O") });
                     sent[identity] = stamp;
                     await SaveStateAsync(token);
                     uploaded++;
@@ -213,6 +260,7 @@ internal sealed class BackupForm : Form
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
                 catch (Exception ex) { SetStatus($"Falha em {relative}: {ex.Message}"); }
             }
+            await SaveStateAsync(token);
             SetStatus($"Varredura concluída. {uploaded} enviado(s), {attempted - uploaded} falha(s).");
             runtimeStatus = attempted == uploaded ? "idle" : "error";
             scanCompleted = attempted == uploaded;
@@ -220,7 +268,7 @@ internal sealed class BackupForm : Form
         finally { scanLock.Release(); }
     }
 
-    private static IEnumerable<string> EnumerateFiles(string root)
+    private static IEnumerable<string> EnumerateFiles(string root, bool directoriesOnly = false)
     {
         var directories = new Stack<string>();
         directories.Push(root);
@@ -238,13 +286,29 @@ internal sealed class BackupForm : Form
                 catch (IOException) { continue; }
                 catch (UnauthorizedAccessException) { continue; }
                 if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
-                if ((attributes & FileAttributes.Directory) != 0) directories.Push(child);
-                else yield return child;
+                if ((attributes & FileAttributes.Directory) != 0) { directories.Push(child); if (directoriesOnly) yield return child; }
+                else if (!directoriesOnly) yield return child;
             }
         }
     }
 
-    private async Task UploadAsync(Uri baseUri, string path, FileStamp stamp, CancellationToken token)
+    private async Task<string> EnsureFolderAsync(string name, string? parentId)
+    {
+        using var list = await AgentRequestAsync("folders" + (parentId is null ? "" : $"?parentId={parentId}"), HttpMethod.Get, null);
+        foreach (var item in list.RootElement.GetProperty("folders").EnumerateArray())
+            if (item.GetProperty("name").GetString() == name) {
+                if (!item.TryGetProperty("providerFolderId", out var provider) || provider.ValueKind != JsonValueKind.String)
+                    throw new IOException("A pasta ainda não está vinculada ao Google Drive. Confira sua conta e tente novamente.");
+                return item.GetProperty("id").GetString()!;
+            }
+        using var created = await AgentRequestAsync("folders", HttpMethod.Post, new { name, parentId });
+        var result = created.RootElement.GetProperty("folder");
+        if (result.GetProperty("providerFolderId").ValueKind != JsonValueKind.String)
+            throw new IOException("Não foi possível criar a pasta no Google Drive. Confira a conexão da conta Google.");
+        return result.GetProperty("id").GetString()!;
+    }
+
+    private async Task<string> UploadAsync(Uri baseUri, string path, FileStamp stamp, string remoteFolderId, CancellationToken token)
     {
         if (accessToken is null && !await RefreshAsync(baseUri)) throw new IOException("Sessão expirada. Entre novamente com Google.");
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
@@ -252,6 +316,7 @@ internal sealed class BackupForm : Form
         form.Add(new StringContent(stamp.Size.ToString()), "sizeBytes");
         form.Add(new StringContent(Path.GetFileName(path)), "fileName");
         form.Add(new StringContent("application/octet-stream"), "mimeType");
+        form.Add(new StringContent(remoteFolderId), "folderId");
         using var content = new StreamContent(stream);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         form.Add(content, "file", Path.GetFileName(path));
@@ -267,6 +332,77 @@ internal sealed class BackupForm : Form
         var now = new FileInfo(path);
         if (now.Length != stamp.Size || now.LastWriteTimeUtc.Ticks != stamp.ModifiedTicks)
             throw new IOException("Arquivo mudou durante o envio; será reenviado na próxima varredura.");
+        using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+        return result.RootElement.GetProperty("file").GetProperty("id").GetString()!;
+    }
+
+    private async Task RestoreAsync()
+    {
+        if (deviceId is null) { MessageBox.Show("Entre com Google para recuperar os backups da sua conta."); return; }
+        if (cancellation is not null) { MessageBox.Show("Pause o backup antes de restaurar."); return; }
+        using var catalog = await AgentRequestAsync("backups", HttpMethod.Get, null);
+        var roots = catalog.RootElement.GetProperty("roots").EnumerateArray().ToArray();
+        if (roots.Length == 0) { MessageBox.Show("Nenhum catálogo de restauração disponível. Inicie um backup com esta versão primeiro."); return; }
+        using var picker = new Form { Text = "Escolha o backup", Width = 650, Height = 320, StartPosition = FormStartPosition.CenterParent };
+        var list = new ListBox { Dock = DockStyle.Fill };
+        foreach (var root in roots) list.Items.Add($"{root.GetProperty("machine").GetString()} — {root.GetProperty("originalPath").GetString()}");
+        var select = new Button { Text = "Selecionar", Dock = DockStyle.Bottom, DialogResult = DialogResult.OK };
+        picker.Controls.Add(list); picker.Controls.Add(select); picker.AcceptButton = select; list.SelectedIndex = 0;
+        if (picker.ShowDialog(this) != DialogResult.OK || list.SelectedIndex < 0) return;
+        var chosen = roots[list.SelectedIndex];
+        var suggested = RestorePaths.Suggest(chosen.GetProperty("originalPath").GetString()!, chosen.GetProperty("anchor").GetString()!, chosen.GetProperty("suffix").GetString()!);
+        var decision = MessageBox.Show($"Destino sugerido:\n{suggested}\n\nSim: usar este destino. Não: escolher outra pasta.\nArquivos existentes serão preservados e ignorados.", "Restaurar pastas", MessageBoxButtons.YesNoCancel);
+        if (decision == DialogResult.Cancel) return;
+        if (decision == DialogResult.No) { using var folderPicker = new FolderBrowserDialog { Description = "Escolha a pasta raiz da restauração" }; if (folderPicker.ShowDialog() != DialogResult.OK) return; suggested = folderPicker.SelectedPath; }
+        RestorePaths.CheckParents(suggested);
+        var rootId = chosen.GetProperty("id").GetString();
+        string? after = null;
+        Directory.CreateDirectory(suggested);
+        var restored = 0; var skipped = 0;
+        do
+        {
+            using var page = await AgentRequestAsync($"backups/{rootId}/entries" + (after is null ? "" : $"?after={after}"), HttpMethod.Get, null);
+            foreach (var entry in page.RootElement.GetProperty("entries").EnumerateArray())
+            {
+                var target = RestorePaths.Resolve(suggested, entry.GetProperty("relativePath").GetString()!);
+                if (entry.TryGetProperty("kind", out var kind) && kind.GetString() == "directory") { Directory.CreateDirectory(target); continue; }
+                if (File.Exists(target)) { skipped++; continue; }
+                if (kind.ValueKind == JsonValueKind.String && kind.GetString() == "empty") {
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    using (var empty = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+                    File.SetLastWriteTimeUtc(target, entry.GetProperty("modifiedUtc").GetDateTime().ToUniversalTime()); restored++; continue;
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                RestorePaths.CheckParents(target);
+                SetStatus($"Restaurando {entry.GetProperty("relativePath").GetString()}");
+                if (!await RefreshAsync(ApiOrigin)) throw new IOException("Sessão expirada.");
+                using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(ApiOrigin, $"files/{entry.GetProperty("fileId").GetString()}/download"));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+                var temporary = Path.Combine(Path.GetDirectoryName(target)!, $".singledrive-{Guid.NewGuid():N}.tmp");
+                try
+                {
+                    await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        await using var input = await response.Content.ReadAsStreamAsync();
+                        var buffer = new byte[1024 * 128]; long total = 0;
+                        var expected = long.Parse(entry.GetProperty("sizeBytes").GetString()!);
+                        int read;
+                        while ((read = await input.ReadAsync(buffer)) > 0) { total += read; if (total > expected) throw new IOException("Tamanho recebido excede o catálogo."); await output.WriteAsync(buffer.AsMemory(0, read)); }
+                        if (total != expected) throw new IOException("Download incompleto.");
+                    }
+                    await using (var verify = File.OpenRead(temporary))
+                        if (!Convert.ToHexString(await SHA256.HashDataAsync(verify)).Equals(entry.GetProperty("sha256").GetString(), StringComparison.OrdinalIgnoreCase)) throw new IOException("A integridade do arquivo não confere.");
+                    RestorePaths.CheckParents(target);
+                    File.SetLastWriteTimeUtc(temporary, entry.GetProperty("modifiedUtc").GetDateTime().ToUniversalTime());
+                    File.Move(temporary, target, false); restored++;
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            }
+            after = page.RootElement.GetProperty("next").GetString();
+        } while (after is not null);
+        SetStatus($"Restauração concluída: {restored} recuperado(s), {skipped} existente(s) preservado(s). Destino: {suggested}");
     }
 
     private async Task LoginAsync()
@@ -355,12 +491,12 @@ internal sealed class BackupForm : Form
         finally { refreshLock.Release(); }
     }
 
-    private async Task<JsonDocument> AgentRequestAsync(string path, HttpMethod method, object body)
+    private async Task<JsonDocument> AgentRequestAsync(string path, HttpMethod method, object? body)
     {
         for (var attempt = 0; attempt < 2; attempt++)
         {
             if (accessToken is null && !await RefreshAsync(ApiOrigin)) throw new UnauthorizedAccessException("Entre novamente com Google.");
-            using var request = new HttpRequestMessage(method, new Uri(ApiOrigin, path)) { Content = JsonContent(body) };
+            using var request = new HttpRequestMessage(method, new Uri(ApiOrigin, path)) { Content = body is null ? null : JsonContent(body) };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             using var response = await http.SendAsync(request);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
@@ -370,7 +506,10 @@ internal sealed class BackupForm : Form
                 throw new UnauthorizedAccessException("O vínculo expirou ou foi revogado.");
             }
             if (response.StatusCode == HttpStatusCode.Forbidden) throw new UnauthorizedAccessException("Vincule o PC novamente pelo login Google.");
-            if (!response.IsSuccessStatusCode) throw new IOException($"Servidor retornou {(int)response.StatusCode}.");
+            if (!response.IsSuccessStatusCode) {
+                using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                throw new IOException(error.RootElement.TryGetProperty("message", out var message) ? message.GetString() : $"Servidor retornou {(int)response.StatusCode}.");
+            }
             return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         }
         throw new UnauthorizedAccessException("Sessão inválida.");
@@ -379,7 +518,7 @@ internal sealed class BackupForm : Form
     private async Task RegisterDeviceAsync()
     {
         using var result = await AgentRequestAsync("desktop-devices/register", HttpMethod.Post,
-            new { name = Environment.MachineName, platform = "windows", appVersion = "0.2.0" });
+            new { name = Environment.MachineName, platform = "windows", appVersion = "0.3.0" });
         deviceId = result.RootElement.GetProperty("device").GetProperty("id").GetString();
     }
 
@@ -396,7 +535,7 @@ internal sealed class BackupForm : Form
         {
             using var result = await AgentRequestAsync("desktop-devices/heartbeat", HttpMethod.Post, new {
                 runtimeStatus, sourceNames = string.IsNullOrEmpty(folder.Text) ? Array.Empty<string>() : new[] { string.IsNullOrEmpty(new DirectoryInfo(folder.Text).Name) ? "Pasta raiz" : new DirectoryInfo(folder.Text).Name },
-                uploadedFiles = sent.Count, completedScan = scanCompleted,
+                uploadedFiles = sent.Values.Count(stamp => stamp.Size >= 0), completedScan = scanCompleted,
             });
             scanCompleted = false;
             var enabled = result.RootElement.GetProperty("backupEnabled").GetBoolean();

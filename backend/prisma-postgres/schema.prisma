@@ -33,6 +33,7 @@ model User {
   uploadRoutingPolicy UploadRoutingPolicy?
   apiKeys       ApiKey[]
   desktopDevices DesktopDevice[]
+  backupRoots BackupRoot[]
 
   @@map("users")
 }
@@ -389,4 +390,31 @@ model WorkspaceInvite {
   @@index([inviteeEmail])
   @@index([targetType, targetId])
   @@map("workspace_invites")
+}
+
+model BackupRoot {
+  id String @id @default(uuid()) @db.Char(36)
+  userId String @map("user_id") @db.Char(36)
+  deviceId String @map("device_id") @db.Char(36)
+  rootKey String @map("root_key") @db.VarChar(64)
+  metadata String @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries BackupEntry[]
+  @@unique([userId, deviceId, rootKey])
+  @@index([userId, createdAt])
+  @@map("backup_roots")
+}
+
+model BackupEntry {
+  id String @id @default(uuid()) @db.Char(36)
+  rootId String @map("root_id") @db.Char(36)
+  pathKey String @map("path_key") @db.VarChar(64)
+  metadata String @db.Text
+  fileId String? @map("file_id") @db.Char(36)
+  updatedAt DateTime @updatedAt @map("updated_at")
+  root BackupRoot @relation(fields: [rootId], references: [id], onDelete: Cascade)
+  @@unique([rootId, pathKey])
+  @@map("backup_entries")
 }

@@ -1,3 +1,4 @@
+import { backupRouter } from './modules/desktop-devices/backup.routes.js'
 import cors from 'cors'
 import express from 'express'
 import { env } from './config/env.js'
@@ -65,4 +66,5 @@ app.use('/invites', inviteRouter)
 app.use('/audit-logs', auditLogRouter)
 app.use('/system', systemRouter)
 app.use('/desktop-devices', desktopDeviceRouter)
+app.use('/backups', backupRouter)
 app.use(errorMiddleware)

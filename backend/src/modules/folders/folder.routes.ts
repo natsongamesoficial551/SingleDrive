@@ -122,7 +122,8 @@ folderRouter.post('/', async (req: AuthRequest, res, next) => {
     }
 
     const connectedAccount = await prisma.connectedAccount.findFirst({
-      where: { userId: req.user!.id, provider: 'google_drive', status: 'connected' }
+      where: { userId: req.user!.id, provider: 'google_drive', status: 'connected',
+        ...(parentFolder?.connectedAccountId ? { id: parentFolder.connectedAccountId } : {}) }
     })
 
     let providerFolderId: string | null = null

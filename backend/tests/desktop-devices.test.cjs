@@ -10,6 +10,9 @@ test('vínculos de PC respeitam conta, tipo de sessão e revogação', async t =
   const express = require('express')
   const { prisma } = require('../dist/config/prisma.js')
   const { desktopDeviceRouter } = require('../dist/modules/desktop-devices/desktop-device.routes.js')
+  const { backupRouter, relativePath } = require('../dist/modules/desktop-devices/backup.routes.js')
+  const { fileRouter } = require('../dist/modules/files/file.routes.js')
+  const { encryptText, decryptText } = require('../dist/utils/crypto.js')
   const { errorMiddleware } = require('../dist/middleware/error.middleware.js')
   const { signAccessToken } = require('../dist/utils/jwt.js')
   const now = () => new Date()
@@ -19,10 +22,15 @@ test('vínculos de PC respeitam conta, tipo de sessão e revogação', async t =
     ['pc-b', { id: 'pc-b', userId: 'b', client: 'desktop' }],
   ].map(([id, value]) => [id, { ...value, user: { status: 'active' }, revokedAt: null, expiresAt: new Date(Date.now() + 3600000) }]))
   const devices = []
+  const roots = []
+  const entries = []
+  let fileFilter
   const patches = []
   const replace = (object, key, value) => { const original = object[key]; patches.push(() => { object[key] = original }); object[key] = value }
   const matches = (device, where) => (!where.id || device.id === where.id) && (!where.userId || device.userId === where.userId) &&
     (!where.sessionId || device.sessionId === where.sessionId) && (where.revokedAt !== null || device.revokedAt === null)
+  replace(prisma.user, 'update', async () => ({}))
+  replace(prisma.desktopDevice, 'count', async ({ where }) => devices.filter(device => matches(device, where) && !sessions.get(device.sessionId).revokedAt && sessions.get(device.sessionId).expiresAt > now()).length)
   replace(prisma.userSession, 'findUnique', async ({ where }) => sessions.get(where.id) ?? null)
   replace(prisma.userSession, 'findUniqueOrThrow', async ({ where }) => sessions.get(where.id))
   replace(prisma.userSession, 'updateMany', async ({ where, data }) => {
@@ -46,12 +54,19 @@ test('vínculos de PC respeitam conta, tipo de sessão e revogação', async t =
   })
   replace(prisma.desktopDevice, 'update', async ({ where, data }) => { const device = devices.find(device => device.id === where.id); Object.assign(device, data); return device })
   replace(prisma, '$transaction', async callback => callback(prisma))
-  const app = express(); app.use(express.json()); app.use('/desktop-devices', desktopDeviceRouter); app.use(errorMiddleware)
+  replace(prisma.backupRoot, 'findMany', async ({ where }) => roots.filter(root => root.userId === where.userId))
+  replace(prisma.backupRoot, 'findFirst', async ({ where }) => roots.find(root => root.id === where.id && root.userId === where.userId) ?? null)
+  replace(prisma.backupRoot, 'upsert', async ({ create }) => { const root = { id: randomUUID(), ...create }; roots.push(root); return root })
+  replace(prisma.file, 'findFirst', async ({ where }) => where.userId === 'a' ? { id: where.id, sizeBytes: 123n } : null)
+  replace(prisma.file, 'findMany', async ({ where }) => { fileFilter = where; return [] })
+  replace(prisma.backupEntry, 'upsert', async ({ create }) => { entries.push(create); return create })
+  replace(prisma.backupEntry, 'findMany', async ({ where }) => entries.filter(entry => entry.rootId === where.rootId))
+  const app = express(); app.use(express.json()); app.use('/desktop-devices', desktopDeviceRouter); app.use('/backups', backupRouter); app.use('/files', fileRouter); app.use(errorMiddleware)
   const server = await new Promise(resolve => { const running = app.listen(0, '127.0.0.1', () => resolve(running)) })
   const base = `http://127.0.0.1:${server.address().port}`
   async function request(sessionId, path = '', method = 'GET', body) {
     const session = sessions.get(sessionId)
-    const response = await fetch(base + '/desktop-devices' + path, { method,
+    const response = await fetch(base + (/^\/(backups|files)/.test(path) ? '' : '/desktop-devices') + path, { method,
       headers: { 'Content-Type': 'application/json', ...(session ? { Authorization: `Bearer ${signAccessToken({ sub: session.userId, sid: sessionId })}` } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body) })
     return { status: response.status, data: await response.json() }
@@ -82,6 +97,15 @@ test('vínculos de PC respeitam conta, tipo de sessão e revogação', async t =
       assert.equal(device.sessionId, undefined); assert.equal(device.userId, undefined)
       assert.equal(device.refreshTokenHash, undefined); assert.equal(device.online, true)
     })
+    await t.test('navegação separa arquivos da raiz, de uma pasta e busca global', async () => {
+      assert.equal((await request('web-a', '/files?root=1')).status, 200)
+      assert.equal(fileFilter.folderId, null)
+      await request('web-a', '/files?folderId=subpasta')
+      assert.equal(fileFilter.folderId, 'subpasta')
+      await request('web-a', '/files?q=contrato')
+      assert.equal(fileFilter.folderId, undefined)
+      assert.equal(fileFilter.name.contains, 'contrato')
+    })
     await t.test('heartbeat só atualiza a própria sessão vinculada e entrega pausa/retomada', async () => {
       const body = { runtimeStatus: 'idle', sourceNames: ['Documentos'], uploadedFiles: 3, completedScan: true }
       assert.equal((await request('pc-b', '/heartbeat', 'POST', body)).status, 403)
@@ -91,6 +115,23 @@ test('vínculos de PC respeitam conta, tipo de sessão e revogação', async t =
       assert.equal(devices[0].uploadedFiles, 3); assert.ok(devices[0].lastBackupAt)
       assert.equal((await request('pc-a', '/heartbeat', 'POST', { ...body, runtimeStatus: 'execute' })).status, 400)
     })
+    let backupId
+    await t.test('catálogo criptografado guarda subpastas e isola contas', async () => {
+      const root = await request('pc-a', '/backups/roots', 'POST', { name: 'Projetos', machine: 'PC', originalPath: 'C:\\Users\\Antigo\\Documents\\Projetos', anchor: 'MyDocuments', suffix: 'Projetos' })
+      assert.equal(root.status, 200); backupId = root.data.id
+      assert.equal(roots[0].metadata.includes('Antigo'), false)
+      assert.equal(JSON.parse(decryptText(roots[0].metadata)).suffix, 'Projetos')
+      const body = { relativePath: '2026/contrato.pdf', fileId: randomUUID(), sha256: 'a'.repeat(64), modifiedUtc: new Date().toISOString() }
+      assert.equal((await request('pc-a', '/backups/' + backupId + '/entries', 'POST', body)).status, 200)
+      assert.equal((await request('pc-a', '/backups/' + backupId + '/entries', 'POST', { relativePath: 'vazia', kind: 'directory' })).status, 200)
+      assert.equal((await request('pc-a', '/backups/' + backupId + '/entries', 'POST', { relativePath: 'zero.txt', kind: 'empty', modifiedUtc: new Date().toISOString() })).status, 200)
+      assert.equal((await request('pc-b', '/backups/' + backupId + '/entries')).status, 404)
+      assert.deepEqual((await request('pc-b', '/backups')).data.roots, [])
+      assert.equal((await request('web-a', '/backups/' + backupId + '/entries')).data.entries[0].relativePath, body.relativePath)
+      assert.equal((await request('pc-a', '/backups/' + backupId + '/entries', 'POST', { ...body, relativePath: '../fora.txt' })).status, 400)
+      for (const path of ['C:/absoluto', 'a\\b', '/absoluto', 'a//b', 'CON.txt', 'a:stream', 'a/../b', 'arquivo.']) assert.equal(relativePath.safeParse(path).success, false)
+      assert.notEqual(encryptText('mesmo'), encryptText('mesmo'))
+    })
     await t.test('revogação invalida a sessão do agente e preserva a sessão do site', async () => {
       assert.equal((await request('web-a', '/' + deviceId, 'DELETE')).status, 200)
       assert.ok(sessions.get('pc-a').revokedAt)
@@ -98,6 +139,20 @@ test('vínculos de PC respeitam conta, tipo de sessão e revogação', async t =
       const remaining = await request('web-a')
       assert.equal(remaining.status, 200); assert.equal(remaining.data.devices[0].revoked, true)
       assert.equal(remaining.data.devices[0].online, false)
+      assert.equal((await request('web-a', '/backups/' + backupId + '/entries')).data.entries.length, 3)
+    })
+    await t.test('aceita cinco PCs, bloqueia o sexto e libera vaga após revogação', async () => {
+      for (let i = 0; i < 6; i++) sessions.set('extra-' + i, { id: 'extra-' + i, userId: 'a', client: 'desktop', user: { status: 'active' }, revokedAt: null, expiresAt: new Date(Date.now() + 3600000) })
+      const linked = []
+      for (let i = 0; i < 5; i++) {
+        const result = await request('extra-' + i, '/register', 'POST', registration)
+        assert.equal(result.status, 200); linked.push(result.data.device.id)
+      }
+      assert.equal((await request('extra-0', '/register', 'POST', registration)).status, 200)
+      const rejected = await request('extra-5', '/register', 'POST', registration)
+      assert.equal(rejected.status, 409); assert.equal(rejected.data.code, 'DEVICE_LIMIT_REACHED')
+      await request('web-a', '/' + linked[0], 'DELETE')
+      assert.equal((await request('extra-5', '/register', 'POST', registration)).status, 200)
     })
   } finally {
     await new Promise(resolve => server.close(resolve))

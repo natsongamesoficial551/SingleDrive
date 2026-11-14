@@ -38,6 +38,7 @@ fileRouter.get('/', async (req: AuthRequest, res, next) => {
   try {
     const query = z.object({
       folderId: z.string().optional(),
+      root: z.literal('1').optional(),
       q: z.string().trim().max(255).optional(),
       kind: z.enum(['image', 'video', 'pdf', 'doc', 'archive']).optional(),
       accountId: z.string().optional(),
@@ -58,7 +59,7 @@ fileRouter.get('/', async (req: AuthRequest, res, next) => {
     const where: any = {
       userId: req.user!.id,
       status: 'active',
-      ...(query.folderId ? { folderId: query.folderId } : {}),
+      ...(query.folderId ? { folderId: query.folderId } : query.root === '1' ? { folderId: null } : {}),
       ...(query.q ? { name: { contains: query.q } } : {}),
       ...(query.accountId ? { connectedAccountId: query.accountId } : {}),
       ...(query.kind ? { mimeType: { in: typeFilters[query.kind] || [] } } : {}),
