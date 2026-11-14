@@ -4,6 +4,7 @@ import { Card } from '@/components/ui/card'
 import { FileIcon } from '@/components/drive/FileIcon'
 import type { FileItem } from '@/data/drive-data'
 import { cn } from '@/lib/utils'
+import { useFileInteraction } from '@/lib/useFileInteraction'
 
 export type FileSizeScale = 'xs' | 'sm' | 'md' | 'lg'
 
@@ -79,15 +80,18 @@ export function FileGrid({
   selectedFileIds = new Set<string>(),
   sizeScale = 'md',
   onFileContextMenu,
-  onToggleFile
+  onToggleFile,
+  onOpenFile
 }: {
   files: FileItem[]
   selectedFileIds?: Set<string>
   sizeScale?: FileSizeScale
   onFileContextMenu?: (event: MouseEvent<HTMLElement>, file: FileItem) => void
   onToggleFile?: (file: FileItem) => void
+  onOpenFile?: (file: FileItem) => void
 }) {
   const cfg = scaleConfig[sizeScale]
+  const interaction = useFileInteraction(onOpenFile, onToggleFile, onFileContextMenu)
   return (
     <div className={cn("mt-5 grid", cfg.grid)}>
       {files.map((file) => {
@@ -97,8 +101,9 @@ export function FileGrid({
             key={file.id ?? file.name}
             draggable
             onDragStart={(event) => { event.dataTransfer.setData('text/plain', file.id ?? ''); event.dataTransfer.effectAllowed = 'move' }}
-            onClick={() => onToggleFile?.(file)}
-            onContextMenu={(event) => onFileContextMenu?.(event, file)}
+            {...interaction(file)}
+            tabIndex={0}
+            aria-label={`Arquivo: ${file.name}`}
             className={cn(
               selected
                 ? 'relative cursor-grab active:cursor-grabbing overflow-hidden file-selected shadow-sm transition hover:-translate-y-0.5 hover:shadow-md'
@@ -107,7 +112,7 @@ export function FileGrid({
             )}
           >
             <div className="flex items-start justify-between gap-2">
-              <input type="checkbox" className={cn("shrink-0 accent-blue-600", cfg.checkbox)} checked={selected} onChange={() => onToggleFile?.(file)} onClick={(event) => event.stopPropagation()} />
+              <input type="checkbox" aria-label={`Selecionar ${file.name}`} className={cn("shrink-0 accent-blue-600", cfg.checkbox)} checked={selected} onChange={() => onToggleFile?.(file)} onClick={(event) => event.stopPropagation()} />
               <button className={cn("flex shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-white/80", cfg.menuBtn)} onClick={(event) => { event.stopPropagation(); onFileContextMenu?.(event, file) }} aria-label={`Open ${file.name} menu`}><MoreVertical className="h-4 w-4" /></button>
             </div>
 
@@ -119,6 +124,7 @@ export function FileGrid({
 
             <div className={cn("min-w-0 text-center", cfg.mtCard)}>
               <h3 className={cn("font-extrabold text-slate-950 line-clamp-2", cfg.title)} title={file.name}>{file.name}</h3>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Arquivo</span>
               <p className={cfg.date}>{file.date}</p>
               <div className={cn("flex flex-wrap justify-center font-semibold text-slate-600", cfg.tagsShell)}>
                 <span className={cn("rounded-full bg-slate-100", cfg.tag)}>{file.size}</span>

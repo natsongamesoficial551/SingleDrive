@@ -1,3 +1,4 @@
+import { useFileInteraction } from '@/lib/useFileInteraction'
 import { FolderOpen, MoreVertical, Star } from 'lucide-react'
 import { type MouseEvent, useState } from 'react'
 import { AvatarStack } from '@/components/drive/AvatarStack'
@@ -5,8 +6,10 @@ import { FileIcon } from '@/components/drive/FileIcon'
 import type { FileItem } from '@/data/drive-data'
 import { apiFetch } from '@/lib/api'
 
-export function FileTable({ files, mode = 'default', selectedFileIds = new Set<string>(), allSelected = false, onFileContextMenu, onToggleFile, onToggleAll }: { files: FileItem[]; mode?: 'default' | 'shared' | 'recent' | 'starred' | 'archived'; selectedFileIds?: Set<string>; allSelected?: boolean; onFileContextMenu?: (event: MouseEvent<HTMLElement>, file: FileItem) => void; onToggleFile?: (file: FileItem) => void; onToggleAll?: () => void }) {
+export function FileTable({ files, mode = 'default', selectedFileIds = new Set<string>(), allSelected = false, onFileContextMenu, onToggleFile, onToggleAll, onOpenFile }: { files: FileItem[]; mode?: 'default' | 'shared' | 'recent' | 'starred' | 'archived'; selectedFileIds?: Set<string>; allSelected?: boolean; onFileContextMenu?: (event: MouseEvent<HTMLElement>, file: FileItem) => void; onToggleFile?: (file: FileItem) => void; onToggleAll?: () => void; onOpenFile?: (file: FileItem) => void }) {
   const [copiedFileId, setCopiedFileId] = useState<string | null>(null)
+
+  const interaction = useFileInteraction(onOpenFile, onToggleFile, onFileContextMenu)
 
   return (
     <div className="mt-4">
@@ -22,9 +25,9 @@ export function FileTable({ files, mode = 'default', selectedFileIds = new Set<s
           const selected = selectedFileIds.has(file.id ?? '')
           const meta = mode === 'archived' ? file.location : mode === 'recent' ? file.openedDate : mode === 'starred' ? file.starredDate : file.date
           return (
-            <article key={file.id ?? file.name} draggable onDragStart={(event) => { event.dataTransfer.setData('text/plain', file.id ?? ''); event.dataTransfer.effectAllowed = 'move' }} onClick={() => onToggleFile?.(file)} onContextMenu={(event) => onFileContextMenu?.(event, file)} className={selected ? 'overflow-hidden rounded-2xl border file-selected p-3.5 shadow-sm cursor-grab active:cursor-grabbing' : 'overflow-hidden rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm cursor-grab active:cursor-grabbing'}>
+            <article key={file.id ?? file.name} draggable onDragStart={(event) => { event.dataTransfer.setData('text/plain', file.id ?? ''); event.dataTransfer.effectAllowed = 'move' }} {...interaction(file)} tabIndex={0} aria-label={`Arquivo: ${file.name}`} className={selected ? 'overflow-hidden rounded-2xl border file-selected p-3.5 shadow-sm cursor-grab active:cursor-grabbing' : 'overflow-hidden rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm cursor-grab active:cursor-grabbing'}>
               <div className="flex items-center gap-3">
-                {onToggleFile ? <input type="checkbox" className="h-4 w-4 shrink-0 accent-blue-600" checked={selected} onChange={() => onToggleFile?.(file)} onClick={(event) => event.stopPropagation()} /> : null}
+                {onToggleFile ? <input type="checkbox" className="h-4 w-4 shrink-0 accent-blue-600" checked={selected} aria-label={`Selecionar ${file.name}`} onChange={() => onToggleFile?.(file)} onClick={(event) => event.stopPropagation()} /> : null}
                 <div className="shrink-0">{mode === 'starred' ? <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" /> : <FileIcon kind={file.kind} />}</div>
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <h3 className="truncate text-sm font-bold leading-snug text-slate-950" title={file.name}>{file.name}</h3>
@@ -62,8 +65,8 @@ export function FileTable({ files, mode = 'default', selectedFileIds = new Set<s
           </thead>
           <tbody>
             {files.map((file) => (
-              <tr key={file.id ?? file.name} draggable onDragStart={(event) => { event.dataTransfer.setData('text/plain', file.id ?? ''); event.dataTransfer.effectAllowed = 'move' }} onContextMenu={(event) => onFileContextMenu?.(event, file)} onClick={() => onToggleFile?.(file)} className={selectedFileIds.has(file.id ?? '') ? 'group border-b file-selected transition hover:bg-orange-500/15 cursor-grab active:cursor-grabbing' : 'group border-b border-slate-200/10 transition hover:bg-slate-100 cursor-grab active:cursor-grabbing'}>
-                <td className="py-2.5"><input type="checkbox" className="h-4 w-4 accent-blue-600" checked={selectedFileIds.has(file.id ?? '')} onChange={() => onToggleFile?.(file)} onClick={(event) => event.stopPropagation()} /></td>
+              <tr key={file.id ?? file.name} draggable onDragStart={(event) => { event.dataTransfer.setData('text/plain', file.id ?? ''); event.dataTransfer.effectAllowed = 'move' }} {...interaction(file)} tabIndex={0} aria-label={`Arquivo: ${file.name}`} className={selectedFileIds.has(file.id ?? '') ? 'group border-b file-selected transition hover:bg-orange-500/15 cursor-grab active:cursor-grabbing' : 'group border-b border-slate-200/10 transition hover:bg-slate-100 cursor-grab active:cursor-grabbing'}>
+                <td className="py-2.5"><input type="checkbox" className="h-4 w-4 accent-blue-600" checked={selectedFileIds.has(file.id ?? '')} aria-label={`Selecionar ${file.name}`} onChange={() => onToggleFile?.(file)} onClick={(event) => event.stopPropagation()} /></td>
                 <td className="py-2.5 font-semibold">
                   <span className="flex min-w-0 items-center gap-2.5">
                     {mode === 'starred' ? <Star className="h-4 w-4 shrink-0 fill-yellow-400 text-yellow-400" /> : <FileIcon kind={file.kind} />}

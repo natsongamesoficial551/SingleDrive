@@ -70,6 +70,9 @@ export function FolderGrid({
       {items.map((folder) => (
         <Card
           key={folder.id || folder.name}
+          tabIndex={0}
+          aria-label={`Abrir pasta ${folder.name}`}
+          onKeyDown={(event) => { if (event.target === event.currentTarget && event.key === 'Enter') onFolderOpen?.(folder) }}
           onClick={() => onFolderOpen?.(folder)}
           onContextMenu={(event) => onFolderMenu?.(event, folder)}
           onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' }}
@@ -95,6 +98,7 @@ export function FolderGrid({
           </button>
           <FolderVisual folder={folder} className={cn('transition group-hover:scale-110', cfg.icon)} />
           <h2 className={cn('line-clamp-2 text-center font-extrabold leading-tight', cfg.title)}>{folder.name}</h2>
+          <span className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-blue-500">Pasta · clique para abrir</span>
           <p className={cn('line-clamp-1 text-center text-slate-500', cfg.sub)}>{folder.updated}</p>
         </Card>
       ))}
