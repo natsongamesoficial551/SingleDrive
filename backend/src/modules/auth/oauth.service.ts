@@ -11,7 +11,7 @@ import { setRefreshCookie } from './session.service.js'
 import { normalizeOAuthFlow, oauthReturnTarget, persistedOAuthFlow } from './oauth-client.js'
 
 export const oauthRouter = Router()
-const challengeSchema = z.object({ codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/), accessMode: z.enum(['essential', 'full']).default('essential'), client: z.enum(['web', 'android']).default('web') })
+const challengeSchema = z.object({ codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/), accessMode: z.enum(['essential', 'full']).default('essential'), client: z.enum(['web', 'android', 'desktop']).default('web') })
 const completeSchema = z.object({ state: z.string().regex(/^[A-Za-z0-9_-]{43}$/), code: z.string().min(1).max(4096), verifier: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
 
 // A pasta do aplicativo pode ser gerida sem conceder acesso a todo o Drive.
@@ -22,6 +22,8 @@ export function googleScopesForMode(mode: string) {
 
 async function start(req: AuthRequest, res: Response, flow: 'login' | 'connect') {
   const { codeChallenge, accessMode, client: appClient } = challengeSchema.parse(req.body)
+  if (appClient === 'desktop' && req.header('X-SingleDrive-Desktop') !== '1')
+    return res.status(403).json({ code: 'DESKTOP_CLIENT_REQUIRED', message: 'Requisição do aplicativo desktop necessária.' })
   // Login verifica identidade; acesso ao Drive é uma autorização separada.
   if (flow === 'login' && accessMode !== 'essential') return res.status(400).json({ code: 'GOOGLE_MODE_INVALID', message: 'Escolha acesso completo nas configurações após entrar.' })
   const config = await prisma.providerConfig.findFirstOrThrow({ where: { userId: null, provider: 'google_drive', status: 'active' }, orderBy: { createdAt: 'desc' } })
@@ -52,7 +54,7 @@ export async function googleCallback(req: Request, res: Response) {
   return res.redirect(`${oauthReturnTarget(state.flow, env.FRONTEND_URL)}#${fragment}`)
 }
 
-export function completeGoogleLogin(createSession: (userId: string, req: AuthRequest) => Promise<{ accessToken: string; refreshToken: string }>) {
+export function completeGoogleLogin(createSession: (userId: string, req: AuthRequest, client?: 'web' | 'android' | 'desktop') => Promise<{ accessToken: string; refreshToken: string }>) {
   return async (req: AuthRequest, res: Response, next: import('express').NextFunction) => {
     try {
       const body = completeSchema.parse(req.body)
@@ -60,6 +62,8 @@ export function completeGoogleLogin(createSession: (userId: string, req: AuthReq
       const challenge = Buffer.from(hashToken(body.verifier), 'hex').toString('base64url')
       if (!state || state.usedAt || state.expiresAt <= new Date() || state.codeChallenge !== challenge || state.providerConfig.status !== 'active')
         return res.status(401).json({ code: 'GOOGLE_FLOW_INVALID', message: 'Inicie novamente a autorização neste navegador.' })
+      if (state.flow === 'desktop_login' && req.header('X-SingleDrive-Desktop') !== '1')
+        return res.status(403).json({ code: 'DESKTOP_CLIENT_REQUIRED', message: 'Conclua a autorização no aplicativo desktop.' })
       const flow = normalizeOAuthFlow(state.flow)
       if (!flow) return res.status(401).json({ code: 'GOOGLE_FLOW_INVALID', message: 'Fluxo inválido.' })
       if (flow === 'connect') {
@@ -104,7 +108,8 @@ export function completeGoogleLogin(createSession: (userId: string, req: AuthReq
       }
       if (user.status !== 'active') return res.status(403).json({ code: 'ACCOUNT_REVIEW_REQUIRED', message: 'A conta exige revisão de segurança.' })
       if (flow === 'login') {
-        const { accessToken, refreshToken } = await createSession(user.id, req)
+        const appClient = state.flow === 'desktop_login' ? 'desktop' : state.flow === 'android_login' ? 'android' : 'web'
+        const { accessToken, refreshToken } = await createSession(user.id, req, appClient)
         setRefreshCookie(res, refreshToken)
         return res.json({ accessToken, user: { id: user.id, name: user.name, email: user.email } })
       }

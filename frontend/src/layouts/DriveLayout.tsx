@@ -8,6 +8,7 @@ import {
   History,
   LogOut,
   Menu,
+  Monitor,
   Moon,
   MoreVertical,
   Search,
@@ -35,6 +36,7 @@ import { cn } from '@/lib/utils'
 const menu = [
   { label: 'Meus arquivos', icon: FileArchive, href: '/all-files' },
   { label: 'Contas e espaço', icon: Gauge, href: '/quota' },
+  { label: 'Computadores', icon: Monitor, href: '/computers' },
   { label: 'Compartilhados', icon: Share2, href: '/shared' },
   { label: 'Favoritos', icon: Star, href: '/starred', disabled: true },
   { label: 'Lixeira', icon: Trash2, href: '/trash' },

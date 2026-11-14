@@ -17,7 +17,9 @@ const loginSchema = z.object({ email: emailSchema, password: z.string().min(1).m
 // Em produção o frontend acessa a API pelo proxy da mesma origem.
 authRouter.use((req, res, next) => {
   res.setHeader('Cache-Control', 'no-store')
-  if (req.method !== 'GET' && req.header('Origin') !== new URL(env.FRONTEND_URL).origin)
+  const desktopRequest = req.header('X-SingleDrive-Desktop') === '1' &&
+    ['/google/start', '/google/complete', '/refresh', '/logout'].includes(req.path) && !req.header('Origin')
+  if (req.method !== 'GET' && !desktopRequest && req.header('Origin') !== new URL(env.FRONTEND_URL).origin)
     return res.status(403).json({ code: 'AUTH_ORIGIN_FORBIDDEN', message: 'Origem de autenticação inválida.' })
   return next()
 })

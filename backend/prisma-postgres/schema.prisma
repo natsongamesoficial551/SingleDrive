@@ -32,6 +32,7 @@ model User {
   workspaceInvitesSent WorkspaceInvite[] @relation("WorkspaceInvitesSent")
   uploadRoutingPolicy UploadRoutingPolicy?
   apiKeys       ApiKey[]
+  desktopDevices DesktopDevice[]
 
   @@map("users")
 }
@@ -83,16 +84,40 @@ model UserSession {
   userId           String    @map("user_id") @db.Char(36)
   refreshTokenHash String    @map("refresh_token_hash") @db.VarChar(255)
   userAgent        String?   @map("user_agent") @db.Text
+  client           String    @default("web") @db.VarChar(16)
   ipAddress        String?   @map("ip_address") @db.VarChar(64)
   expiresAt        DateTime  @map("expires_at")
   revokedAt        DateTime? @map("revoked_at")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  desktopDevice    DesktopDevice?
 
   @@index([userId])
   @@index([refreshTokenHash])
   @@map("user_sessions")
+}
+
+model DesktopDevice {
+  id             String      @id @default(uuid()) @db.Char(36)
+  userId         String      @map("user_id") @db.Char(36)
+  sessionId      String      @unique @map("session_id") @db.Char(36)
+  name           String      @db.VarChar(191)
+  platform       String      @default("windows") @db.VarChar(32)
+  appVersion     String      @map("app_version") @db.VarChar(32)
+  backupEnabled  Boolean     @default(false) @map("backup_enabled")
+  runtimeStatus  String      @default("idle") @map("runtime_status") @db.VarChar(32)
+  sourceNames    Json        @map("source_names")
+  uploadedFiles  Int         @default(0) @map("uploaded_files")
+  lastSeenAt     DateTime    @default(now()) @map("last_seen_at")
+  lastBackupAt   DateTime?   @map("last_backup_at")
+  revokedAt      DateTime?   @map("revoked_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session        UserSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, createdAt])
+  @@map("desktop_devices")
 }
 
 model AuthHandoff {

@@ -17,9 +17,9 @@ export function readRefreshCookie(req: Request) {
   const token = values[0]!.slice(cookieName.length + 1)
   return /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null
 }
-export async function createSession(userId: string, req: Request) {
+export async function createSession(userId: string, req: Request, client: 'web' | 'android' | 'desktop' = 'web') {
   const refreshToken = randomToken()
-  const session = await prisma.userSession.create({ data: { userId, refreshTokenHash: hashToken(refreshToken),
+  const session = await prisma.userSession.create({ data: { userId, client, refreshTokenHash: hashToken(refreshToken),
     userAgent: req.header('User-Agent')?.slice(0, 1024), ipAddress: req.ip,
     expiresAt: new Date(Date.now() + env.REFRESH_TOKEN_TTL_DAYS * 86400_000) } })
   return { accessToken: signAccessToken({ sub: userId, sid: session.id }), refreshToken }

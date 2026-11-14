@@ -1,5 +1,9 @@
 node_modules/
 dist/
+desktop/publish/
+desktop/**/publish/
+desktop/**/bin/
+desktop/**/obj/
 *.log
 .DS_Store
 

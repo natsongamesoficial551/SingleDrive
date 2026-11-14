@@ -19,6 +19,7 @@ import { ApiManagementPage } from '@/pages/ApiManagementPage'
 import { TrashPage } from '@/pages/TrashPage'
 import { ActivityLogPage } from '@/pages/ActivityLogPage'
 import { UploadProvider } from '@/context/UploadContext'
+import { ComputersPage } from '@/pages/ComputersPage'
 
 
 function App() {
@@ -74,6 +75,7 @@ function App() {
           <Route path="trash" element={<TrashPage />} />
           <Route path="activity" element={<ActivityLogPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="computers" element={<ComputersPage />} />
           <Route path="api" element={<ApiManagementPage />} />
         </Route>
       </Route>

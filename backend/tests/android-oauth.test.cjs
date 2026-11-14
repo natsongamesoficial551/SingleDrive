@@ -7,6 +7,12 @@ test('web OAuth keeps existing callback and flows', () => {
   assert.equal(oauthReturnTarget('login', 'https://singledrive.netlify.app'), 'https://singledrive.netlify.app/google-auth')
 })
 
+test('desktop OAuth uses fixed callback and retains login flow', () => {
+  assert.equal(persistedOAuthFlow('login', 'desktop'), 'desktop_login')
+  assert.equal(normalizeOAuthFlow('desktop_login'), 'login')
+  assert.equal(oauthReturnTarget('desktop_login', 'https://unit.example'), 'singledrive-desktop://oauth')
+})
+
 test('native handlers keep PKCE, single-use state and initiating session checks', async t => {
   // All database methods reached by these tests are replaced below. No connection is opened.
   process.env.DATABASE_URL = 'mysql://test:test@127.0.0.1:1/sd_security_test_unit'

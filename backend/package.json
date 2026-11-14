@@ -15,6 +15,7 @@
     "test:s3": "tsx src/scripts/test-s3-connection.ts",
     "test:api-upload": "tsx src/scripts/test-api-upload.ts",
     "test:security": "node --test tests/security.test.cjs",
+    "test:desktop": "node --test tests/desktop-devices.test.cjs tests/android-oauth.test.cjs",
     "test:security:migration": "node --test tests/migration-security.test.cjs",
     "audit:google-public-permissions": "tsx src/scripts/audit-google-public-permissions.ts"
   },

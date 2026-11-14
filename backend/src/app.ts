@@ -15,6 +15,7 @@ import { apiKeyRouter } from './modules/api-keys/api-key.routes.js'
 import { publicApiRouter } from './modules/public-api/public-api.routes.js'
 import { auditLogRouter } from './modules/audit-logs/audit-log.routes.js'
 import { systemRouter } from './modules/system/system.routes.js'
+import { desktopDeviceRouter } from './modules/desktop-devices/desktop-device.routes.js'
 import { rateLimit } from 'express-rate-limit'
 import { AuthRateLimitStore } from './middleware/auth-rate-limit.js'
 
@@ -63,4 +64,5 @@ app.use('/folders', folderRouter)
 app.use('/invites', inviteRouter)
 app.use('/audit-logs', auditLogRouter)
 app.use('/system', systemRouter)
+app.use('/desktop-devices', desktopDeviceRouter)
 app.use(errorMiddleware)
