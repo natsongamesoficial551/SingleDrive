@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:cloudflare": "npm run build && node scripts/prepare-cloudflare.mjs",
     "preview": "vite preview",
     "test:session": "node --test tests/session.test.cjs"
   },
