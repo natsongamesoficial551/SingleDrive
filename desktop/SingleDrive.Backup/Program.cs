@@ -19,7 +19,7 @@ internal static class Program
 
 internal sealed class BackupForm : Form
 {
-    private static readonly Uri ApiOrigin = new("https://singledrive.netlify.app/api/");
+    private static readonly Uri ApiOrigin = new("https://singledrive.pages.dev/api/");
     private readonly Button login = new() { Text = "Entrar com Google", Width = 160 };
     private readonly TextBox folder = new() { Width = 465, ReadOnly = true };
     private readonly Label status = new() { AutoSize = true, Text = "Parado" };

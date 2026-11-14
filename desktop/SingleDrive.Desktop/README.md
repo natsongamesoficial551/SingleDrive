@@ -1,6 +1,6 @@
 # SingleDrive Desktop
 
-Executável Windows que abre a interface completa do SingleDrive em uma janela de aplicativo do Microsoft Edge. Usa o site publicado em `https://singledrive.netlify.app/` e, portanto, as mesmas contas, APIs, arquivos e banco de dados já usados pelo site. O `.exe` não contém URL do banco, senha, segredo OAuth, chave de API ou token de usuário.
+Executável Windows que abre a interface completa do SingleDrive em uma janela de aplicativo do Microsoft Edge. Usa o site publicado em `https://singledrive.pages.dev/` e, portanto, as mesmas contas, APIs, arquivos e banco de dados já usados pelo site. O `.exe` não contém URL do banco, senha, segredo OAuth, chave de API ou token de usuário.
 
 ## Compilar
 

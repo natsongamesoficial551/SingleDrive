@@ -6,7 +6,7 @@ namespace SingleDrive.Backup;
 
 public static class DesktopAgent
 {
-    public static readonly string SiteUrl = "https://singledrive.netlify.app/computers";
+    public static readonly string SiteUrl = "https://singledrive.pages.dev/computers";
 
     public static void Run(string[] args, bool initiallyVisible, Action? onStarted = null)
     {

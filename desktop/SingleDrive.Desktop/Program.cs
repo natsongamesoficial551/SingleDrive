@@ -8,7 +8,7 @@ namespace SingleDrive.Desktop;
 internal static class Program
 {
     // Origem fixa: os dados e a sessão permanecem no mesmo domínio HTTPS do site.
-    private const string SiteUrl = "https://singledrive.netlify.app/computers";
+    private const string SiteUrl = "https://singledrive.pages.dev/computers";
 
     [STAThread]
     private static void Main(string[] args)
