@@ -16,3 +16,5 @@ wix extension add WixToolset.UI.wixext/6.0.2
 ```
 
 Após instalar, abra o SingleDrive pelo menu Iniciar, entre com Google e clique em **Criar disco remoto**. O Windows pode pedir permissão de administrador para instalar o WinFsp. A desinstalação do SingleDrive preserva o driver compartilhado e os arquivos do Google Drive.
+
+Em **Vincular Discord**, clique em **Abrir no navegador**. O aplicativo abre a página no navegador padrão do Windows. Se for solicitado, entre no navegador com o mesmo perfil SingleDrive para concluir a vinculação.

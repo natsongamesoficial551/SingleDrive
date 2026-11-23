@@ -7,9 +7,21 @@ namespace SingleDrive.Backup;
 public static class DesktopAgent
 {
     public static readonly string SiteUrl = "https://singledrive.pages.dev/login";
+    private const string DiscordUrl = "https://singledrive.pages.dev/discord";
 
     public static void Run(string[] args, bool initiallyVisible, Action? onStarted = null)
     {
+        if (args.Length == 1 && string.Equals(args[0].TrimEnd('/'), "singledrive-desktop://discord", StringComparison.OrdinalIgnoreCase))
+        {
+            try { Process.Start(new ProcessStartInfo(DiscordUrl) { UseShellExecute = true }); }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                MessageBox.Show("Não foi possível abrir o navegador. Acesse singledrive.pages.dev/discord pelo navegador padrão.",
+                    "SingleDrive", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            return;
+        }
+
         var localDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SingleDrive");
         Directory.CreateDirectory(localDirectory);
         if (args.Length == 1 && Uri.TryCreate(args[0], UriKind.Absolute, out var callback) &&
