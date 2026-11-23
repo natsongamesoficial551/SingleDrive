@@ -6,6 +6,7 @@ import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
 import { discordLinkLimit } from '../../middleware/request-limits.js'
 import { hashToken, randomToken } from '../../utils/crypto.js'
+import { enabledIdentity } from '../auth/verified-identity.js'
 import { discordBotRequest, discordRoleSettings, type DiscordMember } from './discord-api.js'
 import { discordAuthorizationUrl, discordIdentity, discordOAuthSettings } from './discord-oauth.js'
 
@@ -39,7 +40,7 @@ function startDiscordFlow(purpose: Purpose) {
     }
     const { id, sessionId } = req.user!
     const user = await prisma.user.findUnique({ where: { id }, select: { emailVerifiedAt: true } })
-    if (!user?.emailVerifiedAt) return res.status(403).json({ message: 'Entre novamente com uma conta Google verificada.' })
+    if (!user?.emailVerifiedAt) return res.status(403).json({ message: 'Entre novamente com um perfil verificado.' })
     const state = randomToken()
     await prisma.discordLinkState.deleteMany({ where: { expiresAt: { lte: new Date() } } })
     await prisma.discordLinkState.create({ data: {
@@ -75,7 +76,7 @@ async function readAuthorizedIdentity(req: AuthRequest, res: Response, config: O
 async function reserveIdentity({ id, sessionId }: BrowserSession, discordUserId: string, res: Response) {
   const session = await prisma.userSession.findFirst({
     where: { id: sessionId, userId: id, revokedAt: null, expiresAt: { gt: new Date() }, user: {
-      status: 'active', googleSubject: { not: null }, emailVerifiedAt: { not: null },
+      status: 'active', emailVerifiedAt: { not: null }, ...enabledIdentity,
     } }, select: { id: true },
   })
   if (!session) {

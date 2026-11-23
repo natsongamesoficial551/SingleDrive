@@ -9,22 +9,52 @@ export class AccountCapacityError extends Error {
   constructor(readonly code: string, message: string) { super(message) }
 }
 
-export async function registerGoogleProfile(identity: { email: string; name: string; googleSubject: string }) {
+export function registerGoogleProfile(identity: { email: string; name: string; googleSubject: string }) {
+  return registerProfile(async tx => {
+    const existing = await tx.user.findUnique({ where: { googleSubject: identity.googleSubject } })
+    if (existing) return existing
+    await requireProfileSlot(tx, identity.email, 'GOOGLE_IDENTITY_CONFLICT', 'Esta conta exige recuperação da identidade original.')
+    return tx.user.create({
+      data: { ...identity, emailVerifiedAt: new Date(), passwordHash: 'disabled:google' },
+    })
+  })
+}
+
+export function registerDiscordProfile(identity: { email: string; name: string; discordUserId: string }) {
+  return registerProfile(async tx => {
+    const existing = await tx.discordLink.findUnique({
+      where: { discordUserId: identity.discordUserId }, include: { user: true },
+    })
+    if (existing) {
+      if (existing.loginEnabledAt) return existing.user
+      throw new AccountCapacityError('DISCORD_LOGIN_NOT_ENABLED', discordEmailConflict)
+    }
+    await requireProfileSlot(tx, identity.email, 'DISCORD_IDENTITY_CONFLICT', discordEmailConflict)
+    const now = new Date()
+    return tx.user.create({
+      data: {
+        email: identity.email, name: identity.name, emailVerifiedAt: now, passwordHash: 'disabled:discord',
+        discordLink: { create: { discordUserId: identity.discordUserId, loginEnabledAt: now } },
+      },
+    })
+  })
+}
+
+const discordEmailConflict = 'Já existe um perfil associado a esta conta ou e-mail. Entre pelo método original e habilite o Discord em Configurações → Login com Discord.'
+
+async function requireProfileSlot(tx: Prisma.TransactionClient, email: string, conflictCode: string, conflictMessage: string) {
+  if (await tx.user.findUnique({ where: { email }, select: { id: true } })) {
+    throw new AccountCapacityError(conflictCode, conflictMessage)
+  }
+  if (await tx.user.count() >= maxProfiles) {
+    throw new AccountCapacityError('ACCOUNT_LIMIT_REACHED', 'O SingleDrive atingiu o limite de 100 contas.')
+  }
+}
+
+async function registerProfile<T>(create: (tx: Prisma.TransactionClient) => Promise<T>) {
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      return await prisma.$transaction(async tx => {
-        const existing = await tx.user.findUnique({ where: { googleSubject: identity.googleSubject } })
-        if (existing) return existing
-        if (await tx.user.findUnique({ where: { email: identity.email }, select: { id: true } })) {
-          throw new AccountCapacityError('GOOGLE_IDENTITY_CONFLICT', 'Esta conta exige recuperação da identidade original.')
-        }
-        if (await tx.user.count() >= maxProfiles) {
-          throw new AccountCapacityError('ACCOUNT_LIMIT_REACHED', 'O SingleDrive atingiu o limite de 100 contas.')
-        }
-        return tx.user.create({
-          data: { ...identity, emailVerifiedAt: new Date(), passwordHash: 'disabled:google' },
-        })
-      }, { isolationLevel: 'Serializable' })
+      return await prisma.$transaction(create, { isolationLevel: 'Serializable' })
     } catch (error) {
       if (attempt === 3 || !(error instanceof Prisma.PrismaClientKnownRequestError)
         || (error.code !== 'P2034' && error.code !== 'P2002')) throw error

@@ -40,6 +40,7 @@ export function DiscordCommunityEntry() {
       <Button className="mt-5" disabled={busy} onClick={() => void signIn()}>
         <GoogleLogo />{busy ? 'Aguarde…' : 'Entrar com Google'}
       </Button>
+      <Link className="ml-4 text-sm underline" to="/login">Outras opções de entrada</Link>
     </Card>
   </main>
 }

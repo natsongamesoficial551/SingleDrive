@@ -3,9 +3,9 @@
 Há dois fluxos independentes:
 
 - **Vincular Discord**, no menu lateral, confirma a participação no servidor e solicita ao SingleBot o cargo **Seguindo**. A página https://singledrive.pages.dev/discord também leva a esse fluxo.
-- **Configurações → Login com Discord** cadastra o Discord como opção para entrar no perfil SingleDrive. Esse fluxo funciona sem participação no servidor. O primeiro acesso ao perfil continua sendo feito com Google.
+- **Continuar com Discord**, na tela de entrada, pode criar um perfil a partir de um e-mail verificado no Discord. Para usar o mesmo perfil de um cadastro já existente, entre pelo método original e habilite **Configurações → Login com Discord**. Nenhum dos dois passos depende do servidor.
 
-O aplicativo solicita apenas o escopo Discord `identify` e não envia o e-mail do SingleDrive ao Discord.
+A verificação da comunidade solicita apenas `identify`. O login solicita `identify email` para verificar a identidade e obter o e-mail de um perfil novo.
 
 ## Ativação
 

@@ -8,6 +8,7 @@ import { oauthRouter, googleCallback, completeGoogleLogin } from './oauth.servic
 import { createSession, setRefreshCookie, clearRefreshCookie, readRefreshCookie } from './session.service.js'
 
 import { discordLoginRouter } from '../discord/discord-login.routes.js'
+import { enabledIdentity } from './verified-identity.js'
 import { discordRouter } from '../discord/discord.routes.js'
 
 export const authRouter = Router()
@@ -23,7 +24,7 @@ authRouter.use((req, res, next) => {
 })
 
 authRouter.post(['/login', '/register'], (_req, res) => {
-  return res.status(410).json({ code: 'GOOGLE_LOGIN_ONLY', message: 'Entre com Google para acessar o SingleDrive.' })
+  return res.status(410).json({ code: 'GOOGLE_LOGIN_ONLY', message: 'Entre com Google ou Discord para acessar o SingleDrive.' })
 })
 
 authRouter.use('/discord/login', discordLoginRouter)
@@ -36,7 +37,7 @@ authRouter.post('/refresh', async (req, res, next) => {
   try {
     const token = readRefreshCookie(req)
     if (!token) return res.status(401).json({ code: 'AUTH_SESSION_EXPIRED', message: 'Entre novamente.' })
-    const session = await prisma.userSession.findFirst({ where: { refreshTokenHash: hashToken(token), revokedAt: null, expiresAt: { gt: new Date() }, user: { status: 'active', googleSubject: { not: null } } }, include: { user: true } })
+    const session = await prisma.userSession.findFirst({ where: { refreshTokenHash: hashToken(token), revokedAt: null, expiresAt: { gt: new Date() }, user: { status: 'active', ...enabledIdentity } }, include: { user: true } })
     if (!session) { clearRefreshCookie(res); return res.status(401).json({ code: 'AUTH_SESSION_EXPIRED', message: 'Entre novamente.' }) }
     const nextToken = randomToken()
     const rotated = await prisma.userSession.updateMany({ where: { id: session.id, refreshTokenHash: hashToken(token), revokedAt: null, expiresAt: { gt: new Date() } }, data: { refreshTokenHash: hashToken(nextToken) } })

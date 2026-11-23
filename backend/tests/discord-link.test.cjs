@@ -21,6 +21,9 @@ test('Discord separates server roles from logging in to the SingleDrive profile'
   const { signAccessToken } = require('../dist/utils/jwt.js')
   const { errorMiddleware } = require('../dist/middleware/error.middleware.js')
   const discordId = '100000000000000005'
+  let currentProfile = { id: discordId }
+  const accounts = new Map([['user-a', { id: 'user-a', name: 'Perfil A', email: 'a@unit.example', status: 'active', emailVerifiedAt: new Date(), googleSubject: 'google-a' }]])
+  const createdSessions = new Map()
   const states = new Map()
   const links = new Map()
   const grants = []
@@ -39,9 +42,20 @@ test('Discord separates server roles from logging in to the SingleDrive profile'
     target[name] = fn
     t.after(() => { target[name] = previous })
   }
-  replace(prisma.userSession, 'findUnique', async ({ where }) => session(where.id))
-  replace(prisma.userSession, 'findFirst', async ({ where }) => session(where.id))
-  replace(prisma.user, 'findUnique', async () => ({ emailVerifiedAt: new Date() }))
+  replace(prisma.userSession, 'findUnique', async ({ where }) => createdSessions.get(where.id) ?? session(where.id))
+  replace(prisma.userSession, 'findFirst', async ({ where }) => createdSessions.get(where.id) ?? session(where.id))
+  replace(prisma.user, 'findUnique', async ({ where }) => where.email
+    ? [...accounts.values()].find(user => user.email === where.email) ?? null
+    : accounts.get(where.id) ?? { emailVerifiedAt: new Date() })
+  replace(prisma.user, 'findUniqueOrThrow', async ({ where }) => accounts.get(where.id))
+  replace(prisma.user, 'count', async () => accounts.size)
+  replace(prisma.user, 'create', async ({ data }) => {
+    const { discordLink, ...fields } = data
+    const user = { ...fields, id: 'user-discord', status: 'active', googleSubject: null }
+    accounts.set(user.id, user)
+    links.set(user.id, { ...discordLink.create, userId: user.id, verifiedAt: null })
+    return user
+  })
   replace(prisma.securityRateLimit, 'upsert', async () => ({ hits: 1 }))
   replace(prisma.securityRateLimit, 'deleteMany', async () => ({ count: 0 }))
   replace(prisma.discordLinkState, 'create', async ({ data }) => { states.set(data.stateHash, data); return data })
@@ -56,20 +70,20 @@ test('Discord separates server roles from logging in to the SingleDrive profile'
     links.set(pair.userId, { ...pair, verifiedAt: null })
     return { count: 1 }
   })
-  replace(prisma.discordLink, 'findUnique', async ({ where }) => links.get(where.userId) ?? null)
+  replace(prisma.discordLink, 'findUnique', async ({ where }) => {
+    if (where.userId) return links.get(where.userId) ?? null
+    const link = [...links.values()].find(value => value.discordUserId === where.discordUserId)
+    return link ? { ...link, user: accounts.get(link.userId) } : null
+  })
   replace(prisma.discordLink, 'update', async ({ where, data }) => Object.assign(links.get(where.userId), data))
 
-  replace(prisma.discordLink, 'findFirst', async ({ where }) => {
-    assert.deepEqual(where.user, { status: 'active', googleSubject: { not: null }, emailVerifiedAt: { not: null } })
-    const link = [...links.values()].find(value => value.discordUserId === where.discordUserId && value.loginEnabledAt)
-    return link ? { user: { id: link.userId, name: 'Perfil A', email: 'a@unit.example' } } : null
-  })
   replace(prisma, '$transaction', async fn => fn(prisma))
-  replace(prisma.user, 'update', async () => ({ id: 'user-a' }))
+  replace(prisma.user, 'update', async ({ where }) => ({ id: where.id }))
   replace(prisma.userSession, 'count', async () => 0)
   replace(prisma.userSession, 'create', async ({ data }) => {
-    assert.equal(data.userId, 'user-a')
-    return { id: 'discord-test-session' }
+    const id = 'test-session-' + (createdSessions.size + 1)
+    createdSessions.set(id, { ...data, user: { ...accounts.get(data.userId), discordLink: links.get(data.userId) } })
+    return { id }
   })
 
   const httpFetch = global.fetch
@@ -83,7 +97,7 @@ test('Discord separates server roles from logging in to the SingleDrive profile'
     }
     if (pathname.endsWith('/users/@me')) {
       assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer discord-user-token')
-      return Response.json({ id: discordId })
+      return Response.json(currentProfile)
     }
     assert.equal(new Headers(init.headers).get('Authorization'), 'Bot unit-bot-token')
     if (pathname.endsWith('/members/' + discordId)) return joined ? Response.json({ pending: false }) : new Response(null, { status: 404 })
@@ -159,7 +173,7 @@ test('Discord separates server roles from logging in to the SingleDrive profile'
   const unlinked = await beginLogin()
   const loginInput = { code: 'discord-login-code', state: unlinked.state }
   assert.equal((await request('/login/complete', null, loginInput)).status, 400)
-  assert.equal((await request('/login/complete', null, loginInput, undefined, unlinked.cookie)).status, 403)
+  assert.equal((await request('/login/complete', null, loginInput, undefined, unlinked.cookie)).status, 409)
   joined = false
   const authorizeLogin = await start('first', '/access/start')
   assert.equal((await request('/complete', 'first', authorizeLogin)).status, 400)
@@ -173,4 +187,25 @@ test('Discord separates server roles from logging in to the SingleDrive profile'
   assert.match(login.headers.getSetCookie().join(';'), /__Host-sd_refresh=/)
   assert.equal((await login.json()).user.id, 'user-a')
   assert.equal(grants.length, grantCount)
+
+  const anotherDiscord = '100000000000000006'
+  currentProfile = { id: anotherDiscord, email: 'a@unit.example', verified: true, username: 'Teste' }
+  let attempt = await beginLogin()
+  assert.equal((await request('/login/complete', null, { code: 'collision', state: attempt.state }, undefined, attempt.cookie)).status, 409)
+  currentProfile = { ...currentProfile, email: 'new@unit.example', verified: false }
+  attempt = await beginLogin()
+  assert.equal((await request('/login/complete', null, { code: 'unverified', state: attempt.state }, undefined, attempt.cookie)).status, 403)
+  currentProfile = { ...currentProfile, verified: true }
+  attempt = await beginLogin()
+  const created = await request('/login/complete', null, { code: 'new-profile', state: attempt.state }, undefined, attempt.cookie)
+  assert.equal(created.status, 200)
+  const newLogin = await created.json()
+  assert.equal(newLogin.user.email, 'new@unit.example')
+  assert.equal(links.get(newLogin.user.id).verifiedAt, null)
+  assert.equal(grants.length, grantCount)
+  const me = await httpFetch(`http://127.0.0.1:${server.address().port}/auth/me`, {
+    headers: { Authorization: 'Bearer ' + newLogin.accessToken },
+  })
+  assert.equal(me.status, 200)
+  assert.equal((await me.json()).user.id, newLogin.user.id)
 })
