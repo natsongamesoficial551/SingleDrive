@@ -1,6 +1,6 @@
 # SingleDrive Desktop para Windows
 
-Aplicativo .NET 8 com site em janela e agente de backup na bandeja. Usa a mesma conta Google e as mesmas APIs do site. Não distribui credenciais do banco ou segredos OAuth.
+Aplicativo .NET 8 com site em janela, disco remoto no Explorador de Arquivos e agente de backup na bandeja. Usa a mesma conta Google e as mesmas APIs do site. Não distribui credenciais do banco ou segredos OAuth.
 
 ## Compilar e testar
 
@@ -10,6 +10,20 @@ dotnet run --project desktop/SingleDrive.PathTests/SingleDrive.PathTests.csproj
 ```
 
 Execute SingleDrive.Desktop.exe, abra o agente, entre com Google e selecione a pasta. Backend atualizado e migrações aplicadas são necessários. API de produção: https://singledrive.pages.dev/api/.
+
+## Disco remoto
+
+1. Abra o SingleDrive Desktop no Windows x64 e entre com Google para vincular o PC.
+2. Clique em **Criar disco remoto**. Se houver mais de uma conta Google Drive conectada, escolha a conta que vai guardar os arquivos. Para adicionar uma conta, vá a **Configurações** no site.
+3. Na primeira execução, o aplicativo instala WinFsp e rclone pelo Windows Package Manager, caso precisem ser instalados. Confirme o instalador do Windows se solicitado. O pacote portátil já inclui o rclone.
+4. Use a unidade **SingleDrive**, normalmente **S:**, em **Este Computador**. O aplicativo abre o Explorador após montar a unidade. Para conectar ao entrar no Windows, marque **Iniciar agente ao entrar no Windows**.
+5. Em **Computadores** no site, clique em **Ver arquivos do disco** para conferir os envios. Use **Pausar disco**, **Retomar disco** ou **Revogar acesso** para controlar o PC. O site também consegue autorizar a unidade, e a montagem acontece no aplicativo Windows.
+
+A unidade usa uma conta Google Drive escolhida para aquele vínculo. Os arquivos ficam em **Meu Drive → Disco remoto SingleDrive**, em uma pasta dedicada ao perfil SingleDrive. PCs da mesma conta SingleDrive que selecionam a mesma conta Google usam a mesma pasta. A exclusão pela unidade envia itens para a lixeira do Google. Arquivos do Google Docs e atalhos precisam ser abertos no navegador.
+
+O rclone guarda transferências pendentes no cache local. Confira os arquivos no site antes de desligar ou formatar o PC. O log de montagem fica em `%LOCALAPPDATA%/SingleDrive/remote-disk/`. O disco precisa da conexão com o backend e o Google Drive para confirmar os envios.
+
+Na produção, publique a API com a migração `20261123000000_remote_disk` e o site no Cloudflare Pages. O executável usa a API do site para login e vínculo e faz as operações WebDAV diretamente no backend do Render. Confirme com uma conta de teste que um arquivo criado no Windows aparece no site e no Google Drive.
 
 ## Vínculo e organização
 

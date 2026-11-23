@@ -16,6 +16,7 @@ import { apiKeyRouter } from './modules/api-keys/api-key.routes.js'
 import { publicApiRouter } from './modules/public-api/public-api.routes.js'
 import { auditLogRouter } from './modules/audit-logs/audit-log.routes.js'
 import { systemRouter } from './modules/system/system.routes.js'
+import { remoteDiskDavRouter, remoteDiskSettingsRouter } from './modules/desktop-devices/remote-disk.routes.js'
 import { desktopDeviceRouter } from './modules/desktop-devices/desktop-device.routes.js'
 import { rateLimit } from 'express-rate-limit'
 import { AuthRateLimitStore } from './middleware/auth-rate-limit.js'
@@ -24,6 +25,8 @@ export const app = express()
 app.disable('x-powered-by')
 app.set('trust proxy', env.TRUST_PROXY_HOPS === 0 ? false : env.TRUST_PROXY_HOPS)
 
+// WebDAV usa corpos binários e métodos próprios, inclusive OPTIONS.
+app.use('/remote-disk/dav', remoteDiskDavRouter)
 app.use(cors({ origin: new URL(env.FRONTEND_URL).origin, credentials: true }))
 const parseJson = express.json({ limit: '1mb' })
 app.use((req, res, next) => {
@@ -66,5 +69,6 @@ app.use('/invites', inviteRouter)
 app.use('/audit-logs', auditLogRouter)
 app.use('/system', systemRouter)
 app.use('/desktop-devices', desktopDeviceRouter)
+app.use('/remote-disk', remoteDiskSettingsRouter)
 app.use('/backups', backupRouter)
 app.use(errorMiddleware)

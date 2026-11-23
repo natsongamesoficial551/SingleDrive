@@ -14,6 +14,9 @@ function serialize(device: DesktopDevice, session: { revokedAt: Date | null; exp
     backupEnabled: device.backupEnabled, runtimeStatus: device.runtimeStatus,
     sourceNames: device.sourceNames, uploadedFiles: device.uploadedFiles,
     lastSeenAt: device.lastSeenAt, lastBackupAt: device.lastBackupAt, createdAt: device.createdAt,
+    remoteDiskEnabled: device.remoteDiskEnabled, remoteDiskAccountId: device.remoteDiskAccountId,
+    remoteDiskRootId: device.remoteDiskRootId,
+    remoteDiskMounted: !!device.remoteDiskEnabled && !!device.remoteDiskMounted && !revoked && Date.now() - device.lastSeenAt.getTime() < 90_000,
     revoked, online: !revoked && Date.now() - device.lastSeenAt.getTime() < 90_000,
   }
 }
@@ -35,7 +38,7 @@ desktopDeviceRouter.post('/register', async (req: AuthRequest, res, next) => {
     // Uma sessÃ£o de site/APK nÃ£o se transforma implicitamente em credencial do PC.
     if (session.client !== 'desktop') return res.status(403).json({ code: 'DESKTOP_SESSION_REQUIRED', message: 'Entre com Google pelo aplicativo Windows para vincular este PC.' })
     const device = await prisma.$transaction(async tx => {
-      // O UPDATE trava a linha do usuário até o commit, serializando vínculos concorrentes.
+      // O UPDATE trava a linha do usuï¿½rio atï¿½ o commit, serializando vï¿½nculos concorrentes.
       await tx.user.update({ where: { id: req.user!.id }, data: { updatedAt: new Date() } })
       const existing = await tx.desktopDevice.findUnique({ where: { sessionId: session.id } })
       if (existing?.revokedAt) return null
@@ -47,7 +50,7 @@ desktopDeviceRouter.post('/register', async (req: AuthRequest, res, next) => {
         update: { ...body, lastSeenAt: new Date() },
       })
     }, { isolationLevel: 'ReadCommitted' })
-    if (!device) return res.status(409).json({ code: 'DEVICE_LIMIT_REACHED', message: 'Sua conta permite até 5 computadores. Revogue um vínculo antigo na página Computadores e tente novamente.' })
+    if (!device) return res.status(409).json({ code: 'DEVICE_LIMIT_REACHED', message: 'Sua conta permite atï¿½ 5 computadores. Revogue um vï¿½nculo antigo na pï¿½gina Computadores e tente novamente.' })
     return res.json({ device: serialize(device, session) })
   } catch (error) { return next(error) }
 })
@@ -59,6 +62,7 @@ desktopDeviceRouter.post('/heartbeat', async (req: AuthRequest, res, next) => {
       sourceNames: z.array(z.string().trim().min(1).max(255)).max(20),
       uploadedFiles: z.number().int().min(0).max(2_147_483_647),
       completedScan: z.boolean().default(false),
+      remoteDiskMounted: z.boolean().optional(),
     }).parse(req.body)
     const { completedScan, ...data } = body
     const changed = await prisma.desktopDevice.updateMany({
@@ -67,7 +71,8 @@ desktopDeviceRouter.post('/heartbeat', async (req: AuthRequest, res, next) => {
     })
     if (changed.count !== 1) return res.status(403).json({ code: 'DEVICE_NOT_LINKED', message: 'Vincule este PC novamente.' })
     const device = await prisma.desktopDevice.findUniqueOrThrow({ where: { sessionId: req.user!.sessionId } })
-    return res.json({ backupEnabled: device.backupEnabled })
+    return res.json({ backupEnabled: device.backupEnabled,
+      remoteDiskEnabled: device.remoteDiskEnabled, remoteDiskRootId: device.remoteDiskRootId })
   } catch (error) { return next(error) }
 })
 
@@ -91,7 +96,7 @@ desktopDeviceRouter.delete('/:id', async (req: AuthRequest, res, next) => {
       const device = await tx.desktopDevice.findFirst({ where: { id, userId: req.user!.id } })
       if (!device) return false
       const revokedAt = new Date()
-      await tx.desktopDevice.update({ where: { id }, data: { revokedAt, backupEnabled: false, runtimeStatus: 'paused' } })
+      await tx.desktopDevice.update({ where: { id }, data: { revokedAt, backupEnabled: false, runtimeStatus: 'paused', remoteDiskEnabled: false, remoteDiskMounted: false, remoteDiskKeyHash: null } })
       await tx.userSession.updateMany({ where: { id: device.sessionId, userId: req.user!.id }, data: { revokedAt } })
       return true
     })

@@ -23,6 +23,19 @@ internal sealed class BackupForm : Form
     private readonly Button login = new() { Text = "Entrar com Google", Width = 160 };
     private readonly TextBox folder = new() { Width = 465, ReadOnly = true };
     private readonly Label status = new() { AutoSize = true, Text = "Parado" };
+    private readonly Button diskToggle = new() { Text = "Criar disco remoto", Width = 170 };
+    private readonly Button diskOpen = new() { Text = "Abrir disco", Width = 120, Enabled = false };
+    private readonly Label diskStatus = new() { AutoSize = true, MaximumSize = new Size(560, 0), Text = "Entre com Google para criar a unidade." };
+    private bool diskConsent;
+    private bool diskSetupBusy;
+    private bool diskPolicyKnown;
+    private bool diskEnabled;
+    private bool openDiskWhenReady;
+    private string? diskRootId;
+    private RemoteDiskMount? remoteDisk;
+    private DateTime diskRetryAt;
+    private DateTime diskStartedAt;
+    private readonly SemaphoreSlim settingsLock = new(1, 1);
     private readonly Button toggle = new() { Text = "Iniciar backup", Width = 140 };
     private readonly SemaphoreSlim scanLock = new(1, 1);
     private readonly SemaphoreSlim refreshLock = new(1, 1);
@@ -43,6 +56,7 @@ internal sealed class BackupForm : Form
     private readonly NotifyIcon tray;
     private readonly System.Windows.Forms.Timer heartbeatTimer = new() { Interval = 30_000 };
     private readonly System.Windows.Forms.Timer openTimer = new() { Interval = 500 };
+    private readonly System.Windows.Forms.Timer diskTimer = new() { Interval = 1000 };
     private string StatePath => Path.Combine(Path.GetDirectoryName(settingsPath)!, $"backup-v3-{accountId}.bin");
     private readonly Dictionary<string, FileStamp> sent = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? cancellation;
@@ -50,19 +64,20 @@ internal sealed class BackupForm : Form
     public BackupForm(bool initiallyVisible, EventWaitHandle openSignal)
     {
         http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies, UseCookies = true }) { Timeout = TimeSpan.FromMinutes(30) };
-        Text = "SingleDrive Backup";
+        Text = "SingleDrive — Computador";
         Width = 630;
-        Height = 410;
+        Height = 495;
         StartPosition = FormStartPosition.CenterScreen;
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("Abrir SingleDrive", null, (_, _) => DesktopAgent.OpenWebsite());
-        trayMenu.Items.Add("Configurar backup", null, (_, _) => ShowAgent());
+        trayMenu.Items.Add("Configurar computador", null, (_, _) => ShowAgent());
         trayMenu.Items.Add("Encerrar agente", null, (_, _) => { exitRequested = true; Close(); });
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "SingleDrive — agente do PC", ContextMenuStrip = trayMenu, Visible = true };
         tray.DoubleClick += (_, _) => ShowAgent();
-        FormClosing += (_, e) => { if (!exitRequested) { e.Cancel = true; Hide(); } else { cancellation?.Cancel(); heartbeatTimer.Stop(); openTimer.Stop(); tray.Dispose(); } };
+        FormClosing += (_, e) => { if (!exitRequested) { e.Cancel = true; Hide(); } else { StopRemoteDisk(); cancellation?.Cancel(); heartbeatTimer.Stop(); openTimer.Stop(); tray.Dispose(); } };
         openTimer.Tick += (_, _) => { if (openSignal.WaitOne(0)) ShowAgent(); };
         openTimer.Start();
+        diskTimer.Tick += (_, _) => CheckRemoteDisk();
         heartbeatTimer.Tick += async (_, _) => await HeartbeatAsync();
         Shown += async (_, _) =>
         {
@@ -87,7 +102,18 @@ internal sealed class BackupForm : Form
         };
         panel.Controls.Add(unlink);
         login.Click += async (_, _) => await LoginAsync();
-        panel.Controls.Add(new Label { Text = "Pasta local", AutoSize = true });
+        var diskRow = new FlowLayoutPanel { Width = 580, Height = 36, WrapContents = false };
+        diskRow.Controls.Add(diskToggle);
+        diskRow.Controls.Add(diskOpen);
+        panel.Controls.Add(diskRow);
+        panel.Controls.Add(diskStatus);
+        diskToggle.Click += async (_, _) => await ConfigureRemoteDiskAsync();
+        diskOpen.Click += (_, _) =>
+        {
+            try { remoteDisk?.Open(); }
+            catch (Exception ex) { diskStatus.Text = ex.Message; }
+        };
+        panel.Controls.Add(new Label { Text = "Pasta local para backup", AutoSize = true });
         var row = new FlowLayoutPanel { Width = 580, Height = 38, WrapContents = false };
         row.Controls.Add(folder);
         var choose = new Button { Text = "Escolher", Width = 90 };
@@ -122,6 +148,8 @@ internal sealed class BackupForm : Form
             if (settings is null) return;
             folder.Text = settings.Folder;
             localConsent = settings.LocalConsent;
+            diskConsent = settings.DiskConsent;
+            SetDiskButtons();
             if (!string.IsNullOrEmpty(settings.Cookie))
             {
                 cookies.Add(ApiOrigin, new Cookie("__Host-sd_refresh", settings.Cookie, "/") { Secure = true, HttpOnly = true });
@@ -449,10 +477,13 @@ internal sealed class BackupForm : Form
                 accessToken = session.RootElement.GetProperty("accessToken").GetString();
                 accountId = session.RootElement.GetProperty("user").GetProperty("id").GetString();
                 localConsent = false;
+                diskConsent = false;
+                SetDiskButtons();
                 await SaveSettingsAsync(baseUri);
                 await RegisterDeviceAsync();
                 heartbeatTimer.Start();
-                status.Text = "Conta conectada. Escolha uma pasta e inicie o backup.";
+                status.Text = "Conta conectada. O PC está vinculado.";
+                await HeartbeatAsync();
                 return;
             }
             status.Text = "Tempo de login esgotado. Tente novamente.";
@@ -518,7 +549,7 @@ internal sealed class BackupForm : Form
     private async Task RegisterDeviceAsync()
     {
         using var result = await AgentRequestAsync("desktop-devices/register", HttpMethod.Post,
-            new { name = Environment.MachineName, platform = "windows", appVersion = "0.3.0" });
+            new { name = Environment.MachineName, platform = "windows", appVersion = "0.4.0" });
         deviceId = result.RootElement.GetProperty("device").GetProperty("id").GetString();
     }
 
@@ -536,8 +567,10 @@ internal sealed class BackupForm : Form
             using var result = await AgentRequestAsync("desktop-devices/heartbeat", HttpMethod.Post, new {
                 runtimeStatus, sourceNames = string.IsNullOrEmpty(folder.Text) ? Array.Empty<string>() : new[] { string.IsNullOrEmpty(new DirectoryInfo(folder.Text).Name) ? "Pasta raiz" : new DirectoryInfo(folder.Text).Name },
                 uploadedFiles = sent.Values.Count(stamp => stamp.Size >= 0), completedScan = scanCompleted,
+                remoteDiskMounted = remoteDisk?.Ready == true,
             });
             scanCompleted = false;
+            await UpdateRemoteDiskAsync(result.RootElement);
             var enabled = result.RootElement.GetProperty("backupEnabled").GetBoolean();
             if (!enabled) await StopBackupAsync();
             else if (localConsent) await StartBackupAsync();
@@ -548,6 +581,154 @@ internal sealed class BackupForm : Form
         }
         catch (Exception) { status.Text = "Sem contato com o servidor. Tentaremos novamente em 30 segundos."; }
         finally { heartbeatBusy = false; }
+    }
+
+    private async Task ConfigureRemoteDiskAsync()
+    {
+        if (deviceId is null) { diskStatus.Text = "Entre com Google para vincular este PC."; return; }
+        if (diskSetupBusy || heartbeatBusy) return;
+        diskSetupBusy = true;
+        SetDiskButtons();
+        try
+        {
+            if (!diskPolicyKnown) await HeartbeatAsync();
+            if (!diskPolicyKnown) throw new IOException("O servidor ainda não informou a configuração do disco.");
+            if (diskConsent && diskEnabled)
+            {
+                diskConsent = false;
+                StopRemoteDisk();
+                await SaveSettingsAsync(ApiOrigin);
+                diskStatus.Text = "Disco desconectado neste PC.";
+                return;
+            }
+            if (!diskEnabled && diskRootId is not null)
+                throw new IOException("Retome o acesso deste computador no site, em Computadores.");
+            var linkedDevice = deviceId ?? throw new IOException("Vincule o PC novamente.");
+            string? selected = null;
+            if (diskRootId is null)
+            {
+                using var response = await AgentRequestAsync("connected-accounts", HttpMethod.Get, null);
+                var accounts = response.RootElement.GetProperty("accounts").EnumerateArray()
+                    .Where(item => item.GetProperty("provider").GetString() == "google_drive" && item.GetProperty("status").GetString() == "connected")
+                    .Select(item => new DiskAccount(item.GetProperty("id").GetString()!, item.GetProperty("email").GetString()!))
+                    .ToArray();
+                if (accounts.Length == 0)
+                {
+                    diskStatus.Text = "Conecte uma conta Google Drive em Configurações no site.";
+                    Process.Start(new ProcessStartInfo(new Uri(ApiOrigin, "/settings").AbsoluteUri) { UseShellExecute = true });
+                    return;
+                }
+                selected = ChooseDiskAccount(accounts);
+                if (selected is null) return;
+            }
+            await RemoteDiskMount.PrepareAsync(message => diskStatus.Text = message);
+            if (exitRequested || deviceId != linkedDevice) return;
+            if (selected is not null)
+            {
+                using var response = await AgentRequestAsync($"remote-disk/devices/{linkedDevice}", HttpMethod.Put,
+                    new { enabled = true, accountId = selected });
+            }
+            diskConsent = true;
+            openDiskWhenReady = true;
+            diskRetryAt = DateTime.MinValue;
+            await SaveSettingsAsync(ApiOrigin);
+            await HeartbeatAsync();
+        }
+        catch (Exception ex) { diskStatus.Text = $"Disco remoto: {ex.Message}"; }
+        finally { diskSetupBusy = false; SetDiskButtons(); }
+    }
+
+    private string? ChooseDiskAccount(DiskAccount[] accounts)
+    {
+        if (accounts.Length == 1) return accounts[0].Id;
+        using var dialog = new Form { Text = "Conta do disco remoto", Width = 460, Height = 165, StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false };
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(12), WrapContents = false };
+        var list = new ComboBox { Width = 405, DropDownStyle = ComboBoxStyle.DropDownList, DataSource = accounts, DisplayMember = nameof(DiskAccount.Email) };
+        var ok = new Button { Text = "Criar unidade", Width = 115, DialogResult = DialogResult.OK };
+        panel.Controls.Add(new Label { Text = "Em qual conta Google Drive vamos guardar os arquivos?", AutoSize = true });
+        panel.Controls.Add(list);
+        panel.Controls.Add(ok);
+        dialog.Controls.Add(panel);
+        dialog.AcceptButton = ok;
+        return dialog.ShowDialog(this) == DialogResult.OK ? ((DiskAccount)list.SelectedItem!).Id : null;
+    }
+
+    private async Task UpdateRemoteDiskAsync(JsonElement policy)
+    {
+        diskPolicyKnown = policy.TryGetProperty("remoteDiskEnabled", out var enabled);
+        diskEnabled = diskPolicyKnown && enabled.GetBoolean();
+        diskRootId = diskPolicyKnown ? policy.GetProperty("remoteDiskRootId").GetString() : null;
+        SetDiskButtons();
+        if (!diskEnabled)
+        {
+            StopRemoteDisk();
+            if (!diskSetupBusy)
+                diskStatus.Text = !diskPolicyKnown ? "O servidor ainda não oferece disco remoto."
+                    : diskRootId is null ? "Crie uma unidade para salvar no Google Drive." : "Disco pausado no site.";
+            return;
+        }
+        if (!diskConsent || exitRequested)
+        {
+            if (!diskSetupBusy) diskStatus.Text = "Clique em Conectar disco remoto para montar a unidade.";
+            return;
+        }
+        if (diskRootId is not string root || accountId is null || remoteDisk is not null) return;
+        if (DateTime.UtcNow < diskRetryAt) return;
+        try
+        {
+            using var data = await AgentRequestAsync("remote-disk/mount-key", HttpMethod.Post, new { });
+            if (!diskConsent || exitRequested) return;
+            var key = data.RootElement.GetProperty("key").GetString()!;
+            remoteDisk = new RemoteDiskMount(accountId, root, key);
+            diskStartedAt = DateTime.UtcNow;
+            diskStatus.Text = $"Conectando a unidade {remoteDisk.DriveLetter}…";
+            diskTimer.Start();
+            SetDiskButtons();
+        }
+        catch (UnauthorizedAccessException) { throw; }
+        catch (Exception ex)
+        {
+            diskRetryAt = DateTime.UtcNow.AddMinutes(2);
+            diskStatus.Text = $"Disco remoto: {ex.Message}";
+        }
+    }
+
+    private void CheckRemoteDisk()
+    {
+        if (remoteDisk is not { } mount) { diskTimer.Stop(); return; }
+        if (mount.Ready)
+        {
+            diskStatus.Text = $"SingleDrive ({mount.DriveLetter}) está disponível no Explorador.";
+            SetDiskButtons();
+            if (!openDiskWhenReady) return;
+            openDiskWhenReady = false;
+            try { mount.Open(); }
+            catch (Exception ex) { diskStatus.Text = ex.Message; }
+            return;
+        }
+        if (mount.Running && DateTime.UtcNow - diskStartedAt < TimeSpan.FromMinutes(2)) return;
+        StopRemoteDisk();
+        diskRetryAt = DateTime.UtcNow.AddMinutes(2);
+        diskStatus.Text = "Falha ao montar. Confira o WinFsp e o registro do rclone.";
+        diskStatus.AccessibleDescription = mount.LogPath;
+    }
+
+    private void StopRemoteDisk()
+    {
+        diskTimer.Stop();
+        openDiskWhenReady = false;
+        var mount = remoteDisk;
+        remoteDisk = null;
+        if (mount is not null) mount.Dispose();
+        SetDiskButtons();
+    }
+
+    private void SetDiskButtons()
+    {
+        diskToggle.Text = diskConsent && diskEnabled ? "Desconectar disco" : diskRootId is null ? "Criar disco remoto" : "Conectar disco remoto";
+        diskToggle.Enabled = !diskSetupBusy && (diskEnabled || diskRootId is null);
+        diskOpen.Enabled = remoteDisk?.Ready == true;
     }
 
     private async Task StopBackupAsync()
@@ -567,6 +748,12 @@ internal sealed class BackupForm : Form
 
     private async Task ClearDeviceAsync()
     {
+        diskConsent = false;
+        diskPolicyKnown = false;
+        diskEnabled = false;
+        diskRootId = null;
+        StopRemoteDisk();
+        diskStatus.Text = "Entre com Google para criar a unidade.";
         await StopBackupAsync();
         heartbeatTimer.Stop();
         deviceId = null;
@@ -581,12 +768,17 @@ internal sealed class BackupForm : Form
 
     private async Task SaveSettingsAsync(Uri baseUri)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
-        var name = "__Host-sd_refresh";
-        var token = cookies.GetCookies(baseUri)[name]?.Value ?? "";
-        var protectedSettings = ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(new Settings(folder.Text, token, localConsent)), null, DataProtectionScope.CurrentUser);
-        await File.WriteAllBytesAsync(settingsPath + ".tmp", protectedSettings);
-        File.Move(settingsPath + ".tmp", settingsPath, true);
+        await settingsLock.WaitAsync();
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
+            var token = cookies.GetCookies(baseUri)["__Host-sd_refresh"]?.Value ?? "";
+            var settings = new Settings(folder.Text, token, localConsent, diskConsent);
+            var protectedSettings = ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(settings), null, DataProtectionScope.CurrentUser);
+            await File.WriteAllBytesAsync(settingsPath + ".tmp", protectedSettings);
+            File.Move(settingsPath + ".tmp", settingsPath, true);
+        }
+        finally { settingsLock.Release(); }
     }
 
     private async Task SaveStateAsync(CancellationToken token)
@@ -603,6 +795,7 @@ internal sealed class BackupForm : Form
         else status.Text = value;
     }
 
-    private sealed record Settings(string Folder, string Cookie, bool LocalConsent);
+    private sealed record DiskAccount(string Id, string Email);
+    private sealed record Settings(string Folder, string Cookie, bool LocalConsent, bool DiskConsent = false);
     private sealed record FileStamp(long Size, long ModifiedTicks);
 }

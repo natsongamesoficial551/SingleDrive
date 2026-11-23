@@ -117,6 +117,12 @@ model DesktopDevice {
   user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   session        UserSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
+  remoteDiskEnabled   Boolean @default(false) @map("remote_disk_enabled")
+  remoteDiskAccountId String? @map("remote_disk_account_id") @db.Char(36)
+  remoteDiskRootId     String? @map("remote_disk_root_id") @db.VarChar(255)
+  remoteDiskKeyHash    String? @unique @map("remote_disk_key_hash") @db.VarChar(64)
+  remoteDiskMounted    Boolean @default(false) @map("remote_disk_mounted")
+
   @@index([userId, revokedAt, createdAt])
   @@map("desktop_devices")
 }

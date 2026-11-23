@@ -4,7 +4,7 @@ import { apiFetch, apiFetchRaw, formatBytes } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 
-type Account = { id: string; provider: string; email: string; status: string }
+export type GoogleDriveAccount = { id: string; provider: string; email: string; status: string }
 type DriveItem = { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; webViewLink?: string; capabilities?: { canRename?: boolean; canTrash?: boolean; canDownload?: boolean } }
 type FolderPath = { id: string; name: string }
 type BrowseResult = { items: DriveItem[]; nextPageToken: string | null }
@@ -20,7 +20,7 @@ function safeGoogleLink(value?: string) {
   }
 }
 
-export function GoogleDriveBrowser({ accounts }: { accounts: Account[] }) {
+export function GoogleDriveBrowser({ accounts, remoteRootId }: { accounts: GoogleDriveAccount[]; remoteRootId?: string }) {
   const connected = accounts.filter((account) => account.provider === 'google_drive' && account.status === 'connected')
   const [accountId, setAccountId] = useState('')
   const [shared, setShared] = useState(false)
@@ -31,7 +31,7 @@ export function GoogleDriveBrowser({ accounts }: { accounts: Account[] }) {
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
-  const folderId = path.at(-1)?.id ?? 'root'
+  const folderId = path.at(-1)?.id ?? remoteRootId ?? 'root'
 
   useEffect(() => {
     if (!accountId && connected[0]) setAccountId(connected[0].id)
@@ -60,9 +60,23 @@ export function GoogleDriveBrowser({ accounts }: { accounts: Account[] }) {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'A operação falhou.') }
     finally { setLoading(false) }
   }
+  function validDiskName(name: string, ignoredId?: string) {
+    if (!remoteRootId) return true
+    const key = name.normalize('NFC').toUpperCase()
+    if (name.length > 255 || /[<>:"/\\|?*\x00-\x1f]|[. ]$|^(CON|PRN|AUX|NUL|COM[0-9¹²³]|LPT[0-9¹²³])(?:\.|$)/i.test(name)) {
+      setError('Escolha um nome de arquivo ou pasta compatível com o Windows.')
+      return false
+    }
+    if (items.some(item => item.id !== ignoredId && item.name.normalize('NFC').toUpperCase() === key)) {
+      setError('Já existe um item com esse nome.')
+      return false
+    }
+    return true
+  }
+
   function rename(item: DriveItem) {
     const name = window.prompt('Novo nome:', item.name)?.trim()
-    if (!name || name === item.name) return
+    if (!name || name === item.name || !validDiskName(name, item.id)) return
     void perform(async () => { await apiFetch(`${drivePath}/items/${encodeURIComponent(item.id)}`, { method: 'PATCH', body: JSON.stringify({ name }) }) })
   }
   function trash(item: DriveItem) {
@@ -71,11 +85,11 @@ export function GoogleDriveBrowser({ accounts }: { accounts: Account[] }) {
   }
   function createFolder() {
     const name = window.prompt('Nome da nova pasta:')?.trim()
-    if (!name) return
+    if (!name || !validDiskName(name)) return
     void perform(async () => { await apiFetch(`${drivePath}/folders`, { method: 'POST', body: JSON.stringify({ name, parentId: folderId }) }) })
   }
   function upload(file?: globalThis.File) {
-    if (!file) return
+    if (!file || !validDiskName(file.name)) return
     const params = new URLSearchParams({ name: file.name, parentId: folderId, mimeType: file.type || 'application/octet-stream' })
     void perform(async () => { await apiFetch(`${drivePath}/upload?${params}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file }) })
   }
@@ -112,14 +126,14 @@ export function GoogleDriveBrowser({ accounts }: { accounts: Account[] }) {
   if (!connected.length) return null
   const account = connected.find((item) => item.id === accountId)
   return <section className="mt-8" aria-label="Arquivos das contas Google Drive" onContextMenu={(event) => event.stopPropagation()}>
-    <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-lg font-bold">Explorar Google Drive</h2><p className="mt-1 text-sm text-slate-500">Navegue pelas pastas originais de cada conta conectada.</p></div></div>
-    <div className="mt-4 flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-lg font-bold">{remoteRootId ? 'Arquivos do disco remoto' : 'Explorar Google Drive'}</h2>{!remoteRootId && <p className="mt-1 text-sm text-slate-500">Navegue pelas pastas originais de cada conta conectada.</p>}</div></div>
+    {!remoteRootId && <div className="mt-4 flex flex-wrap gap-2">
       {connected.map((item) => <Button key={item.id} disabled={loading} variant={accountId === item.id ? 'soft' : 'outline'} size="sm" onClick={() => { setAccountId(item.id); setPath([]); setShared(false) }}><Cloud className="h-4 w-4" />{item.email}</Button>)}
-    </div>
+    </div>}
     {account && <Card className="mt-4 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-1 text-sm"><button disabled={loading} className="font-bold text-blue-600" onClick={() => setPath([])}>{shared ? 'Compartilhados comigo' : 'Meu Drive'}</button>{path.map((folder, index) => <span key={folder.id} className="inline-flex min-w-0 items-center gap-1"><ChevronRight className="h-4 w-4 shrink-0 text-slate-400" /><button disabled={loading} className="truncate text-slate-700 hover:underline" onClick={() => setPath(path.slice(0, index + 1))}>{folder.name}</button></span>)}</div>
-        <div className="flex flex-wrap gap-2"><Button disabled={loading} size="sm" variant={!shared ? 'soft' : 'outline'} onClick={() => { setPath([]); setShared(false) }}>Meu Drive</Button><Button disabled={loading} size="sm" variant={shared ? 'soft' : 'outline'} onClick={() => { setPath([]); setShared(true) }}>Compartilhados comigo</Button></div>
+        <div className="flex min-w-0 flex-wrap items-center gap-1 text-sm"><button disabled={loading} className="font-bold text-blue-600" onClick={() => setPath([])}>{remoteRootId ? 'SingleDrive' : shared ? 'Compartilhados comigo' : 'Meu Drive'}</button>{path.map((folder, index) => <span key={folder.id} className="inline-flex min-w-0 items-center gap-1"><ChevronRight className="h-4 w-4 shrink-0 text-slate-400" /><button disabled={loading} className="truncate text-slate-700 hover:underline" onClick={() => setPath(path.slice(0, index + 1))}>{folder.name}</button></span>)}</div>
+        {remoteRootId ? <Button disabled={loading} size="sm" variant="outline" onClick={() => setRevision((value) => value + 1)}>Atualizar arquivos</Button> : <div className="flex flex-wrap gap-2"><Button disabled={loading} size="sm" variant={!shared ? 'soft' : 'outline'} onClick={() => { setPath([]); setShared(false) }}>Meu Drive</Button><Button disabled={loading} size="sm" variant={shared ? 'soft' : 'outline'} onClick={() => { setPath([]); setShared(true) }}>Compartilhados comigo</Button></div>}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3"><p className="text-xs text-slate-500">{account.email} · Alterações aqui também aparecem no Google Drive. Arquivos Google são baixados em PDF.</p><div className="flex gap-2"><input ref={inputRef} type="file" className="hidden" onChange={(event) => { upload(event.target.files?.[0]); event.target.value = '' }} /><Button size="sm" variant="outline" disabled={loading || (shared && folderId === 'root')} onClick={() => inputRef.current?.click()}><Upload className="h-4 w-4" /> Enviar arquivo</Button><Button size="sm" variant="outline" disabled={loading || (shared && folderId === 'root')} onClick={createFolder}>Nova pasta</Button></div></div>
       {error && <p role="alert" className="mx-4 mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">Não foi possível carregar esta conta: {error}</p>}

@@ -13,7 +13,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        DesktopAgent.Run(args, false, LaunchSite);
+        DesktopAgent.Run(args, true, LaunchSite);
     }
 
     private static void LaunchSite()
