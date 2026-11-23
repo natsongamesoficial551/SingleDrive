@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom'
 import { GoogleLogo } from '@/components/auth/GoogleLogo'
 import './landing.css'
 
-const installer = 'https://github.com/natsongamesoficial551/SingleDrive/releases/latest/download/SingleDrive-Windows-x64.msi'
+const installerVersion = '0.5.0'
+const installer = `https://github.com/natsongamesoficial551/SingleDrive/releases/download/v${installerVersion}/SingleDrive-${installerVersion}-x64.msi`
 
 function Wordmark() {
   return <span className="sd-landing-wordmark"><span aria-hidden="true">S</span>SingleDrive</span>
@@ -148,7 +149,7 @@ export function LandingPage() {
             <h2 id="sd-landing-download-title">Faça o download e comece a usar <em>em segundos.</em></h2>
             <p className="sd-landing-description">Instale o SingleDrive para Windows e acesse seus arquivos da nuvem direto no computador.</p>
             <a className="sd-landing-primary" href={installer}><WindowsMark /> Baixar para Windows <ArrowRight aria-hidden="true" /></a>
-            <p className="sd-landing-compatibility">Instalador MSI para Windows 10 e 11, 64 bits</p>
+            <p className="sd-landing-compatibility">Versão {installerVersion} · MSI para Windows 10 e 11, 64 bits</p>
           </div>
           <DesktopPreview />
         </div>
