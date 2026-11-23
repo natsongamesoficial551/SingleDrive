@@ -59,6 +59,19 @@ test('Discord grants Seguindo only for the verified browser session and guild me
   replace(prisma.discordLink, 'findUnique', async ({ where }) => links.get(where.userId) ?? null)
   replace(prisma.discordLink, 'update', async ({ where, data }) => Object.assign(links.get(where.userId), data))
 
+  replace(prisma.discordLink, 'findFirst', async ({ where }) => {
+    assert.deepEqual(where.user, { status: 'active', googleSubject: { not: null }, emailVerifiedAt: { not: null } })
+    const link = [...links.values()].find(value => value.discordUserId === where.discordUserId && value.verifiedAt)
+    return link ? { user: { id: link.userId, name: 'Perfil A', email: 'a@unit.example' } } : null
+  })
+  replace(prisma, '$transaction', async fn => fn(prisma))
+  replace(prisma.user, 'update', async () => ({ id: 'user-a' }))
+  replace(prisma.userSession, 'count', async () => 0)
+  replace(prisma.userSession, 'create', async ({ data }) => {
+    assert.equal(data.userId, 'user-a')
+    return { id: 'discord-test-session' }
+  })
+
   const httpFetch = global.fetch
   t.mock.method(global, 'fetch', async (url, init) => {
     if (String(url).startsWith('http://127.0.0.1:')) return httpFetch(url, init)
@@ -91,11 +104,11 @@ test('Discord grants Seguindo only for the verified browser session and guild me
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening))
   })
   t.after(() => new Promise(resolve => server.close(resolve)))
-  function request(path, sessionId, body, origin = process.env.FRONTEND_URL) {
+  function request(path, sessionId, body, origin = process.env.FRONTEND_URL, cookie) {
     return httpFetch(`http://127.0.0.1:${server.address().port}/auth/discord${path}`, {
       method: path ? 'POST' : 'GET',
       headers: {
-        Origin: origin, 'Content-Type': 'application/json',
+        Origin: origin, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}),
         ...(sessionId ? { Authorization: 'Bearer ' + signAccessToken({ sub: sessionAccount[sessionId], sid: sessionId }) } : {}),
       },
       body: body && JSON.stringify(body),
@@ -132,5 +145,28 @@ test('Discord grants Seguindo only for the verified browser session and guild me
   assert.equal((await (await request('', 'first')).json()).linked, true)
   const grantCount = grants.length
   assert.equal((await request('/complete', 'second', await start('second'))).status, 409)
+  assert.equal(grants.length, grantCount)
+
+  async function beginLogin() {
+    const response = await request('/login/start')
+    assert.equal(response.status, 200)
+    const setCookie = response.headers.getSetCookie()[0]
+    assert.match(setCookie, /HttpOnly; Secure; SameSite=Lax/)
+    const { state, url } = await response.json()
+    challenge = new URL(url).searchParams.get('code_challenge')
+    return { state, cookie: setCookie.split(';', 1)[0] }
+  }
+  const unlinked = await beginLogin()
+  const loginInput = { code: 'discord-login-code', state: unlinked.state }
+  assert.equal((await request('/login/complete', null, loginInput)).status, 400)
+  const verifiedAt = links.get('user-a').verifiedAt
+  links.get('user-a').verifiedAt = null
+  assert.equal((await request('/login/complete', null, loginInput, undefined, unlinked.cookie)).status, 403)
+  links.get('user-a').verifiedAt = verifiedAt
+  const verifiedLogin = await beginLogin()
+  const login = await request('/login/complete', null, { code: 'verified-code', state: verifiedLogin.state }, undefined, verifiedLogin.cookie)
+  assert.equal(login.status, 200)
+  assert.match(login.headers.getSetCookie().join(';'), /__Host-sd_refresh=/)
+  assert.equal((await login.json()).user.id, 'user-a')
   assert.equal(grants.length, grantCount)
 })

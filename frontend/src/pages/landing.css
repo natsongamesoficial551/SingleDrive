@@ -61,7 +61,7 @@ body:has(.sd-landing) { background: #030a07; }
   box-shadow: 0 0 .8rem .15rem #00ee7877;
 }
 
-.sd-landing-nav-install, .sd-landing-primary, .sd-landing-secondary {
+.sd-landing-nav-install, .sd-landing-nav-login, .sd-landing-primary, .sd-landing-secondary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -73,7 +73,10 @@ body:has(.sd-landing) { background: #030a07; }
   transition: background-color .18s, box-shadow .18s, border-color .18s;
 }
 
-.sd-landing-nav-install { justify-self: end; min-height: 2.8rem; padding: .55rem 1rem; border: 1px solid #0bd771; }
+.sd-landing-nav-actions { justify-self: end; display: flex; align-items: center; gap: .6rem; }
+.sd-landing-nav-login { min-height: 2.8rem; padding: .55rem 1rem; color: #fff; background: #133c27; border: 1px solid #4ee78b80; }
+.sd-landing-nav-login:hover { background: #1c5738; }
+.sd-landing-nav-install { min-height: 2.8rem; padding: .55rem 1rem; border: 1px solid #0bd771; }
 .sd-landing-nav-install:hover { background: #123c26; }
 .sd-landing-nav-install svg, .sd-landing-primary svg { width: 1.12rem; height: 1.12rem; }
 
@@ -268,7 +271,8 @@ body:has(.sd-landing) { background: #030a07; }
   .sd-landing-nav { grid-template-columns: 1fr auto; gap: .35rem .5rem; padding-top: .75rem; }
   .sd-landing-nav-links { grid-row: 2; grid-column: 1 / -1; justify-content: center; gap: 2rem; }
   .sd-landing-nav-links a { min-height: 2.5rem; font-size: .88rem; }
-  .sd-landing-nav-install { min-height: 2.35rem; font-size: .79rem; padding-inline: .68rem; }
+  .sd-landing-nav-actions { gap: .35rem; }
+  .sd-landing-nav-install, .sd-landing-nav-login { min-height: 2.35rem; font-size: .79rem; padding-inline: .58rem; }
   .sd-landing-primary, .sd-landing-secondary { min-height: 3rem; font-size: .85rem; padding: .55rem .78rem; gap: .42rem; }
   .sd-landing-secondary > span { width: 1.85rem; }
   .sd-landing-highlights { gap: .55rem .75rem; }

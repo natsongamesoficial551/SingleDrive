@@ -102,7 +102,10 @@ export function LandingPage() {
           <a href="#sobre">Sobre</a>
           <a href="#download">Download</a>
         </div>
-        <a className="sd-landing-nav-install" href={installer}><Download aria-hidden="true" /> Baixar Agora</a>
+        <div className="sd-landing-nav-actions">
+          <Link className="sd-landing-nav-login" to="/login">Entrar</Link>
+          <a className="sd-landing-nav-install" href={installer}><Download aria-hidden="true" /> Baixar Agora</a>
+        </div>
       </nav>
     </header>
     <main>

@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { GoogleLogo } from '@/components/auth/GoogleLogo'
 import { apiFetch } from '@/lib/api'
-import { getAccessToken } from '@/lib/auth'
+import { getAccessToken, setAuthSession, type AuthUser } from '@/lib/auth'
+import { consumeDiscordLogin } from '@/lib/discord-auth'
 import { startGoogleAuth } from '@/lib/google-auth'
 
 type DiscordStatus = { configured: boolean; linked: boolean; guildId: string | null }
 
 export function DiscordLinkPage() {
   const location = useLocation()
+  const navigate = useNavigate()
   const fromDiscord = location.pathname === '/discord/callback'
   const [status, setStatus] = useState<DiscordStatus>()
   const [error, setError] = useState('')
@@ -27,6 +29,16 @@ export function DiscordLinkPage() {
         const query = new URLSearchParams(location.search)
         window.history.replaceState(window.history.state, '', '/discord')
         const code = query.get('code'), state = query.get('state')
+        if (consumeDiscordLogin(state)) {
+          if (signedIn) { navigate('/all-files', { replace: true }); return }
+          if (!code || !state) throw new Error('O acesso pelo Discord foi cancelado ou expirou.')
+          const session = await apiFetch<{ accessToken: string; user: AuthUser }>('/auth/discord/login/complete', {
+            method: 'POST', skipAuth: true, retry: false, body: JSON.stringify({ code, state }),
+          })
+          setAuthSession(session.accessToken, session.user)
+          navigate('/all-files', { replace: true })
+          return
+        }
         if (!signedIn) throw new Error('Entre com Google e comece a vinculação novamente.')
         if (!code || !state) throw new Error('A autorização pelo Discord foi cancelada ou expirou.')
         await apiFetch('/auth/discord/complete', {
@@ -37,7 +49,7 @@ export function DiscordLinkPage() {
       if (signedIn) setStatus(await apiFetch<DiscordStatus>('/auth/discord'))
     })().catch(reason => setError(reason instanceof Error ? reason.message : 'Não foi possível verificar sua conta.'))
       .finally(() => setBusy(false))
-  }, [fromDiscord, location.search, signedIn])
+  }, [fromDiscord, location.search, navigate, signedIn])
 
   async function continueVerification() {
     setError('')

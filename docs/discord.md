@@ -10,7 +10,7 @@ O caminho público é https://singledrive.pages.dev/discord. A pessoa entra com 
 
 | Variável | Valor |
 | --- | --- |
-| `DISCORD_CLIENT_ID` | `1553443707586482266` |
+| `DISCORD_CLIENT_ID` | `1574532255739674697` |
 | `DISCORD_GUILD_ID` | `1574525541267144807` |
 | `DISCORD_MEMBER_ROLE_ID` | `1574529104357629996` |
 | `DISCORD_FOLLOWING_ROLE_ID` | `1574529102268858388` |
