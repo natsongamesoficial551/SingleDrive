@@ -282,3 +282,8 @@ body:has(.sd-landing) { background: #030a07; }
   .sd-account-preview li { gap: .4em; padding-inline: .5em; }
   .sd-account-preview ul { gap: .48rem; }
 }
+
+@media (max-width: 380px) {
+  .sd-landing-nav-install { width: 2.35rem; padding-inline: 0; }
+  .sd-landing-nav-install > span { display: none; }
+}

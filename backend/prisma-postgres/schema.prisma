@@ -43,7 +43,8 @@ model User {
 model DiscordLink {
   userId        String    @id @map("user_id") @db.Char(36)
   discordUserId String    @unique @map("discord_user_id") @db.VarChar(20)
-  verifiedAt    DateTime? @map("verified_at")
+  verifiedAt     DateTime? @map("verified_at")
+  loginEnabledAt DateTime? @map("login_enabled_at")
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("discord_links")

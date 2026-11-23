@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { startGoogleAuth } from '@/lib/google-auth'
-import { startDiscordLogin } from '@/lib/discord-auth'
+import { startDiscordFlow } from '@/lib/discord-auth'
+import { useLocation } from 'react-router-dom'
 import { BrandLogo } from '@/components/drive/BrandLogo'
 import { AuthStory } from '@/components/auth/AuthStory'
 import { GoogleLogo } from '@/components/auth/GoogleLogo'
@@ -8,7 +9,8 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 
 export function LoginPage() {
-  const [error, setError] = useState('')
+  const location = useLocation()
+  const [error, setError] = useState(() => (location.state?.discordError as string | undefined) ?? '')
   const [loading, setLoading] = useState<'google' | 'discord' | null>(null)
 
   async function signIn(provider: 'google' | 'discord') {
@@ -16,7 +18,7 @@ export function LoginPage() {
     setError('')
     try {
       if (provider === 'google') await startGoogleAuth('login')
-      else await startDiscordLogin()
+      else await startDiscordFlow('login')
     }
     catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Não foi possível iniciar o acesso.')
@@ -39,7 +41,7 @@ export function LoginPage() {
         <Button className="mt-3 w-full" variant="outline" disabled={!!loading} onClick={() => void signIn('discord')}>
           {loading === 'discord' ? 'Redirecionando…' : 'Continuar com Discord'}
         </Button>
-        <p className="mt-3 text-sm text-slate-500">Para entrar com Discord, vincule sua conta primeiro em Configurações.</p>
+        <p className="mt-3 text-sm text-slate-500">Para usar o Discord na entrada, habilite essa opção em Configurações → Login com Discord.</p>
       </Card>
     </div>
   </main>

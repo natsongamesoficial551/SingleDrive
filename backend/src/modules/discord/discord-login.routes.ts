@@ -51,12 +51,12 @@ discordLoginRouter.post('/complete', async (req, res) => {
   catch { return res.status(502).json({ message: 'Não foi possível confirmar sua conta no Discord. Tente novamente.' }) }
 
   const link = await prisma.discordLink.findFirst({
-    where: { discordUserId, verifiedAt: { not: null }, user: {
+    where: { discordUserId, loginEnabledAt: { not: null }, user: {
       status: 'active', googleSubject: { not: null }, emailVerifiedAt: { not: null },
     } },
     select: { user: { select: { id: true, name: true, email: true } } },
   })
-  if (!link) return res.status(403).json({ message: 'Entre com Google e vincule sua conta Discord em Configurações antes de usar esse acesso.' })
+  if (!link) return res.status(403).json({ message: 'Entre com Google e habilite o login pelo Discord em Configurações antes de usar esse acesso.' })
   const session = await createSession(link.user.id, req)
   setRefreshCookie(res, session.refreshToken)
   return res.json({ accessToken: session.accessToken, user: link.user })

@@ -2,7 +2,7 @@ const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const { createHash } = require('node:crypto')
 
-test('Discord grants Seguindo only for the verified browser session and guild member', async t => {
+test('Discord separates server roles from logging in to the SingleDrive profile', async t => {
   Object.assign(process.env, {
     DATABASE_URL: 'mysql://unit:unit@127.0.0.1:1/unit',
     FRONTEND_URL: 'https://unit.example',
@@ -61,7 +61,7 @@ test('Discord grants Seguindo only for the verified browser session and guild me
 
   replace(prisma.discordLink, 'findFirst', async ({ where }) => {
     assert.deepEqual(where.user, { status: 'active', googleSubject: { not: null }, emailVerifiedAt: { not: null } })
-    const link = [...links.values()].find(value => value.discordUserId === where.discordUserId && value.verifiedAt)
+    const link = [...links.values()].find(value => value.discordUserId === where.discordUserId && value.loginEnabledAt)
     return link ? { user: { id: link.userId, name: 'Perfil A', email: 'a@unit.example' } } : null
   })
   replace(prisma, '$transaction', async fn => fn(prisma))
@@ -114,8 +114,8 @@ test('Discord grants Seguindo only for the verified browser session and guild me
       body: body && JSON.stringify(body),
     })
   }
-  async function start(sessionId) {
-    const response = await request('/start', sessionId)
+  async function start(sessionId, route = '/start') {
+    const response = await request(route, sessionId)
     assert.equal(response.status, 200)
     const url = new URL((await response.json()).url)
     assert.equal(url.searchParams.get('scope'), 'identify')
@@ -159,10 +159,14 @@ test('Discord grants Seguindo only for the verified browser session and guild me
   const unlinked = await beginLogin()
   const loginInput = { code: 'discord-login-code', state: unlinked.state }
   assert.equal((await request('/login/complete', null, loginInput)).status, 400)
-  const verifiedAt = links.get('user-a').verifiedAt
-  links.get('user-a').verifiedAt = null
   assert.equal((await request('/login/complete', null, loginInput, undefined, unlinked.cookie)).status, 403)
-  links.get('user-a').verifiedAt = verifiedAt
+  joined = false
+  const authorizeLogin = await start('first', '/access/start')
+  assert.equal((await request('/complete', 'first', authorizeLogin)).status, 400)
+  assert.equal((await request('/access/complete', 'other', authorizeLogin)).status, 400)
+  assert.equal((await request('/access/complete', 'first', authorizeLogin)).status, 200)
+  assert.equal((await (await request('', 'first')).json()).loginEnabled, true)
+  assert.equal(grants.length, grantCount)
   const verifiedLogin = await beginLogin()
   const login = await request('/login/complete', null, { code: 'verified-code', state: verifiedLogin.state }, undefined, verifiedLogin.cookie)
   assert.equal(login.status, 200)

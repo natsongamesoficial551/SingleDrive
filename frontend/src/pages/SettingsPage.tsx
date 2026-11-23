@@ -355,7 +355,7 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Setting" description="Manage account and connected storage." actions={<><a href="/discord" className="inline-flex items-center rounded-md border px-3 py-2 text-sm font-semibold">Vincular Discord</a><Button variant="outline" size="sm" onClick={() => setS3Open(true)}><Database className="h-4 w-4" />Connect S3</Button><Button size="sm" onClick={connectDrive} disabled={connecting}><Link2 className="h-4 w-4" />{connecting ? 'Connecting...' : 'Conectar Google Drive'}</Button></>} />
+      <PageHeader title="Setting" description="Manage account and connected storage." actions={<><a href="/settings/discord-access" className="inline-flex items-center rounded-md border px-3 py-2 text-sm font-semibold">Login com Discord</a><Button variant="outline" size="sm" onClick={() => setS3Open(true)}><Database className="h-4 w-4" />Connect S3</Button><Button size="sm" onClick={connectDrive} disabled={connecting}><Link2 className="h-4 w-4" />{connecting ? 'Connecting...' : 'Conectar Google Drive'}</Button></>} />
       {message ? <p className="mt-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-700">{message}</p> : null}
       <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_280px]">
         <div className="grid gap-4">

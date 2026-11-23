@@ -13,6 +13,7 @@ import {
   MoreVertical,
   Search,
   Settings,
+  Link2,
   Share2,
   SlidersHorizontal,
   Star,
@@ -42,6 +43,7 @@ const menu = [
   { label: 'Lixeira', icon: Trash2, href: '/trash' },
   { label: 'Atividade', icon: History, href: '/activity' },
   { label: 'Configurações', icon: Settings, href: '/settings' },
+  { label: 'Vincular Discord', icon: Link2, href: '/discord/servidor' },
   { label: 'Chaves de API', icon: Braces, href: '/api' },
 ]
 

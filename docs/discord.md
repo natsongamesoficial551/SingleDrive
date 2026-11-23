@@ -1,6 +1,11 @@
 # Vinculação do Discord
 
-O caminho público é https://singledrive.pages.dev/discord. A pessoa entra com Google, confirma a conta no Discord e precisa estar no servidor. A API atribui **Seguindo** depois de validar as duas sessões. O aplicativo solicita apenas o escopo Discord `identify` e não envia o e-mail do SingleDrive ao Discord.
+Há dois fluxos independentes:
+
+- **Vincular Discord**, no menu lateral, confirma a participação no servidor e solicita ao SingleBot o cargo **Seguindo**. A página https://singledrive.pages.dev/discord também leva a esse fluxo.
+- **Configurações → Login com Discord** cadastra o Discord como opção para entrar no perfil SingleDrive. Esse fluxo funciona sem participação no servidor. O primeiro acesso ao perfil continua sendo feito com Google.
+
+O aplicativo solicita apenas o escopo Discord `identify` e não envia o e-mail do SingleDrive ao Discord.
 
 ## Ativação
 

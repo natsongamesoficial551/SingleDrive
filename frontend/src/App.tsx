@@ -23,7 +23,7 @@ import { UploadProvider } from '@/context/UploadContext'
 import { ComputersPage } from '@/pages/ComputersPage'
 
 
-import { DiscordLinkPage } from '@/pages/DiscordLinkPage'
+import { DiscordCallbackPage, DiscordCommunityEntry, DiscordLinkPage } from '@/pages/DiscordLinkPage'
 
 function DriveApp() {
   const [ready, setReady] = useState(false)
@@ -62,8 +62,8 @@ function DriveApp() {
       <Routes>
       <Route path="login" element={getAccessToken() ? <Navigate to="/all-files" replace /> : <LoginPage />} />
       <Route path="register" element={<Navigate to="/login" replace />} />
-      <Route path="discord" element={<DiscordLinkPage />} />
-      <Route path="discord/callback" element={<DiscordLinkPage />} />
+      <Route path="discord" element={<DiscordCommunityEntry />} />
+      <Route path="discord/callback" element={<DiscordCallbackPage />} />
       <Route path="google-auth" element={<GoogleAuthPage />} />
       <Route path="google-connected" element={<GoogleConnectedPage />} />
       <Route path="public/files/:token" element={<PublicFilePage />} />
@@ -79,6 +79,8 @@ function DriveApp() {
           <Route path="trash" element={<TrashPage />} />
           <Route path="activity" element={<ActivityLogPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="discord/servidor" element={<DiscordLinkPage />} />
+          <Route path="settings/discord-access" element={<DiscordLinkPage key="access" access />} />
           <Route path="computers" element={<ComputersPage />} />
           <Route path="api" element={<ApiManagementPage />} />
         </Route>
