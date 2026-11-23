@@ -1,0 +1,180 @@
+/* A composição de desktop e os recortes do celular usam a mesma arte fornecida. */
+.sd-landing {
+  position: relative;
+  max-width: 1440px;
+  min-height: 100dvh;
+  margin-inline: auto;
+  overflow: clip;
+  color: #f7f8f7;
+  background: #050b08;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+body:has(.sd-landing) { background: #050b08; }
+.sd-landing a:focus-visible { outline: 3px solid #55fbb0; outline-offset: 4px; }
+.sd-landing-reference { display: block; width: 100%; height: auto; }
+.sd-landing-art:not(.sd-landing-open) { display: none; }
+
+@media (min-width: 860px) {
+  .sd-landing-header,
+  .sd-landing-hero,
+  .sd-landing-about,
+  .sd-landing-download { position: absolute; width: 100%; left: 0; }
+  .sd-landing-header { top: 0; height: 4.17%; }
+  .sd-landing-hero { top: 4.17%; height: 34.63%; }
+  .sd-landing-about { top: 38.8%; height: 29.05%; }
+  .sd-landing-download { top: 67.85%; height: 32.15%; }
+
+  .sd-landing-copy,
+  .sd-landing-highlights,
+  .sd-landing-compatibility,
+  .sd-landing a span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .sd-landing a {
+    position: absolute;
+    display: block;
+    border-radius: .65rem;
+    cursor: pointer;
+  }
+
+  .sd-landing a :is(svg, i) { display: none; }
+  .sd-landing a:hover { background-color: rgb(255 255 255 / 5%); }
+  .sd-landing-brand { left: 5.08%; top: 15%; width: 12.2%; height: 70%; }
+  .sd-landing-home { left: 32.5%; top: 15%; width: 5.4%; height: 70%; }
+  .sd-landing-nav-about { left: 40.3%; top: 15%; width: 5.7%; height: 70%; }
+  .sd-landing-nav-download { left: 48.3%; top: 15%; width: 9.3%; height: 70%; }
+  .sd-landing-nav-install { left: 83.2%; top: 23%; width: 13%; height: 64%; }
+  .sd-landing-hero-install { left: 5.08%; top: 68.55%; width: 17.2%; height: 10.55%; }
+  .sd-landing-how { left: 24.1%; top: 68.55%; width: 18%; height: 10.55%; }
+  .sd-landing-final-install { left: 5.37%; top: 68.15%; width: 24.55%; height: 11.7%; }
+  .sd-landing-open { left: 73.5%; top: 60.55%; width: 14.45%; height: 8.35%; }
+  .sd-landing :is(.sd-landing-nav-install, .sd-landing-hero-install, .sd-landing-how, .sd-landing-final-install) { border-radius: 999px; }
+}
+
+@media (max-width: 859px) {
+  .sd-landing-reference { display: none; }
+  .sd-landing-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    align-items: center;
+    justify-items: center;
+    gap: .6rem;
+    padding: 1rem 1.25rem .75rem;
+    border-bottom: 1px solid #214332;
+  }
+  .sd-landing-nav a { text-decoration: none; }
+  .sd-landing-brand {
+    grid-column: 1 / 3;
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: .55rem;
+    font-weight: 750;
+  }
+  .sd-landing-brand i {
+    display: grid;
+    width: 2rem;
+    aspect-ratio: 1;
+    place-items: center;
+    border-radius: .55rem;
+    background: #00bd64;
+    color: white;
+    font: 800 1.25rem/1 system-ui, sans-serif;
+  }
+  .sd-landing-nav-install {
+    grid-row: 1;
+    grid-column: 3;
+    justify-self: end;
+    white-space: nowrap;
+    border: 1px solid #00df7a;
+    border-radius: 999px;
+    padding: .52rem .65rem;
+    font-size: .75rem;
+  }
+  .sd-landing-nav :is(.sd-landing-home, .sd-landing-nav-about, .sd-landing-nav-download) {
+    grid-row: 2;
+    padding: .35rem .45rem;
+    font-size: .9rem;
+  }
+  .sd-landing-home { color: #00df7a; }
+  .sd-landing :is(.sd-landing-hero, .sd-landing-about, .sd-landing-download) {
+    padding: clamp(1.25rem, 5vw, 3rem);
+    padding-block: clamp(2rem, 8vw, 4rem);
+  }
+  .sd-landing-hero { background: radial-gradient(ellipse at 95% 70%, #064e2e, #050b08 65%); }
+  .sd-landing-about { background: linear-gradient(145deg, #f6f6f6, #eef5f0 70%, #a2e4bf); color: #0b120e; }
+  .sd-landing-download { background: radial-gradient(ellipse at 100% 66%, #075b34, #050b08 65%); }
+  .sd-landing-copy { max-width: 36rem; }
+  .sd-landing-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: .55rem;
+    margin: 0 0 .7rem;
+    padding: .45rem .75rem;
+    border: 1px solid #087c4c;
+    border-radius: 999px;
+    background: #0b2317;
+    font-size: .875rem;
+  }
+  .sd-landing-tag::before {
+    content: '';
+    width: .68rem;
+    height: .68rem;
+    border-radius: 50%;
+    background: #00df7a;
+  }
+  .sd-landing-about .sd-landing-tag { background: #d3ebdf; border-color: #bee4ce; }
+  .sd-landing :is(h1, h2) {
+    margin: 0;
+    font-size: clamp(2.15rem, 6vw, 3.5rem);
+    font-weight: 800;
+    letter-spacing: -.047em;
+    line-height: .99;
+  }
+  .sd-landing em { font-style: normal; color: #00db70; }
+  .sd-landing-about em { color: #008941; }
+  .sd-landing-description { margin: .9rem 0 1.35rem; font-size: 1rem; line-height: 1.5; }
+  .sd-landing-actions, .sd-landing-highlights, .sd-landing-features { display: flex; flex-wrap: wrap; gap: .65rem; }
+  .sd-landing :is(.sd-landing-primary, .sd-landing-secondary, .sd-landing-nav-install) {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    text-decoration: none;
+  }
+  .sd-landing :is(.sd-landing-primary, .sd-landing-secondary) {
+    min-height: 2.75rem;
+    padding: .65rem .85rem;
+    border-radius: 999px;
+    font-size: .875rem;
+    font-weight: 700;
+  }
+  .sd-landing-primary { background: linear-gradient(110deg, #00e879, #4df7a4); color: #031c11; }
+  .sd-landing-secondary { border: 1px solid #365444; }
+  .sd-landing svg { width: 1rem; height: 1rem; flex: none; }
+  .sd-landing-highlights { padding: 0; margin: 1rem 0; list-style: none; }
+  .sd-landing-highlights li { display: inline-flex; align-items: center; gap: .3rem; font-size: .75rem; }
+  .sd-landing-highlights svg { color: #32f496; }
+  .sd-landing-features { flex-direction: column; padding: 0; margin: 0 0 1.25rem; list-style: none; }
+  .sd-landing-features li { display: flex; align-items: center; gap: .55rem; }
+  .sd-landing-features svg { box-sizing: content-box; padding: .42rem; border-radius: 50%; background: #bcE8d0; }
+  .sd-landing-compatibility { margin: .6rem 0 1.4rem; font-size: .8rem; color: #aebbb4; }
+  .sd-landing .sd-landing-art {
+    display: block;
+    max-width: 36rem;
+    border-radius: .75rem;
+    background-image: url('/singledrive-landing.png');
+    background-repeat: no-repeat;
+  }
+  .sd-landing-art-hero { aspect-ratio: 474 / 463; background-size: 216.04% auto; background-position: right 7.55%; }
+  .sd-landing-art-about { aspect-ratio: 536 / 253; background-size: 191.04% auto; background-position: right 51.44%; }
+  .sd-landing-open { aspect-ratio: 596 / 456; background-size: 171.81% auto; background-position: right bottom; }
+}
