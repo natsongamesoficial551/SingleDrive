@@ -9,6 +9,7 @@ import { env } from '../../config/env.js'
 import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
 import { getAuthedGoogleClient } from '../google/google.service.js'
+import { googleQuotaMaxAgeMs, refreshAccountQuota } from '../storage/quota-refresh.js'
 
 export const remoteDiskSettingsRouter = Router()
 export const remoteDiskDavRouter = Router()
@@ -171,7 +172,7 @@ async function locate(drive: Drive, root: DiskFile, path: string[]) {
 const xml = (value: string) => value.replace(/[<>&"']/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[ch]!))
 const etag = (item: DiskFile) => '"' + item.id + '-' + (item.version ?? '0') + '"'
 
-function prop(path: string[], item: DiskFile) {
+function prop(path: string[], item: DiskFile, quota?: { used: bigint; free: bigint }) {
   const folder = item.mimeType === folderMime
   const href = davPrefix + '/' + path.map(encodeURIComponent).join('/') + (folder && path.length ? '/' : '')
   const modified = new Date(item.modifiedTime ?? item.createdTime ?? 0).toUTCString()
@@ -179,7 +180,19 @@ function prop(path: string[], item: DiskFile) {
     + '<D:displayname>' + xml(item.name) + '</D:displayname><D:resourcetype>' + (folder ? '<D:collection/>' : '') + '</D:resourcetype>'
     + '<D:getcontentlength>' + (item.size ?? '0') + '</D:getcontentlength><D:getcontenttype>' + xml(item.mimeType) + '</D:getcontenttype>'
     + '<D:getlastmodified>' + modified + '</D:getlastmodified><D:getetag>' + xml(etag(item)) + '</D:getetag>'
+    + (quota ? '<D:quota-used-bytes>' + quota.used + '</D:quota-used-bytes>'
+      + '<D:quota-available-bytes>' + quota.free + '</D:quota-available-bytes>' : '')
     + '</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>'
+}
+
+async function getDiskQuota(account: { id: string; provider: string }) {
+  const cached = await prisma.storageAccount.findUnique({ where: { connectedAccountId: account.id } })
+  const storage = cached?.lastSyncedAt && cached.lastSyncedAt.getTime() >= Date.now() - googleQuotaMaxAgeMs
+    ? cached
+    : await refreshAccountQuota(account).catch(() => cached)
+  if (!storage || storage.totalBytes === null) return undefined
+  const used = storage.usedBytes > storage.totalBytes ? storage.totalBytes : storage.usedBytes
+  return { used, free: storage.totalBytes - used }
 }
 
 // Evita que dois clientes desta instância criem simultaneamente o mesmo caminho.
@@ -275,8 +288,10 @@ remoteDiskDavRouter.use(async (req, res: Response) => {
         if (names.has(name)) throw new DavError(409, 'Há nomes duplicados nesta pasta no Google Drive.')
         names.add(name)
       }
+      // O rclone consulta a cota com PROPFIND Depth: 0 na raiz.
+      const quota = depth === '0' && path.length === 0 ? await getDiskQuota(account).catch(() => undefined) : undefined
       return res.status(207).type('application/xml').send('<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">'
-        + prop(path, item) + entries.map(child => prop([...path, child.name], child)).join('') + '</D:multistatus>')
+        + prop(path, item, quota) + entries.map(child => prop([...path, child.name], child)).join('') + '</D:multistatus>')
     }
     if (req.method === 'GET' || req.method === 'HEAD') {
       const { item } = await locate(drive, root, path)

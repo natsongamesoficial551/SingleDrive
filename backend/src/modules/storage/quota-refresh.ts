@@ -3,6 +3,7 @@ import { syncGoogleQuota } from '../google/google.service.js'
 import { syncS3Quota } from '../s3/s3.service.js'
 
 const refreshing = new Map<string, ReturnType<typeof syncGoogleQuota>>()
+export const googleQuotaMaxAgeMs = 60_000
 
 export function refreshAccountQuota(account: { id: string; provider: string }) {
   const pending = refreshing.get(account.id)
@@ -18,7 +19,7 @@ export async function refreshStaleQuotas(userId: string) {
     where: { userId, status: 'connected' }, include: { storageAccount: true },
   })
   const stale = accounts.filter(account => !account.storageAccount?.lastSyncedAt ||
-    (account.provider === 'google_drive' && account.storageAccount.lastSyncedAt.getTime() < Date.now() - 60_000))
+    (account.provider === 'google_drive' && account.storageAccount.lastSyncedAt.getTime() < Date.now() - googleQuotaMaxAgeMs))
   // Limitar concorrência e preservar os últimos valores se uma conta estiver indisponível.
   for (let offset = 0; offset < stale.length; offset += 3) {
     await Promise.allSettled(stale.slice(offset, offset + 3).map(refreshAccountQuota))

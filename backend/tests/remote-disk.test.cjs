@@ -17,6 +17,7 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
   const undici = require('undici')
   const { prisma } = require('../dist/config/prisma.js')
   const googleService = require('../dist/modules/google/google.service.js')
+  const quotaService = require('../dist/modules/storage/quota-refresh.js')
   const { signAccessToken } = require('../dist/utils/jwt.js')
   const { errorMiddleware } = require('../dist/middleware/error.middleware.js')
   let key = 'e'.repeat(43)
@@ -38,6 +39,9 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
     user: { status: 'active' },
   }
   const accountId = device.remoteDiskAccountId
+  const capacity = { totalBytes: 16_106_127_360n, usedBytes: 2_147_483_648n }
+  let cachedQuota = { ...capacity, lastSyncedAt: new Date() }
+  let refreshedAccounts = []
   const deviceMatches = where => (!where.id || where.id === device.id) && (!where.userId || where.userId === device.userId)
     && (!where.sessionId || where.sessionId === device.sessionId) && (!where.remoteDiskKeyHash || where.remoteDiskKeyHash === device.remoteDiskKeyHash)
     && (!where.remoteDiskEnabled || device.remoteDiskEnabled)
@@ -60,7 +64,15 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
   }))
   replace(prisma.userSession, 'findUniqueOrThrow', async ({ where }) => ({ client: where.id.startsWith('pc') ? 'desktop' : 'web' }))
   replace(prisma.connectedAccount, 'findFirst', async ({ where }) =>
-    where.id === accountId && where.userId === device.userId ? { id: accountId } : null)
+    where.id === accountId && where.userId === device.userId ? { id: accountId, provider: 'google_drive' } : null)
+  replace(prisma.storageAccount, 'findUnique', async ({ where }) => {
+    assert.equal(where.connectedAccountId, accountId)
+    return cachedQuota
+  })
+  replace(quotaService, 'refreshAccountQuota', async account => {
+    refreshedAccounts.push(account.id)
+    return { ...capacity, usedBytes: 3_221_225_472n }
+  })
   replace(prisma.user, 'update', async () => ({}))
   replace(prisma, '$transaction', async action => action(prisma))
   replace(googleService, 'getAuthedGoogleClient', async () => ({ getRequestHeaders: async () => new Headers() }))
@@ -145,6 +157,16 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
     assert.equal((await request('PROPFIND', '', { Depth: '1' })).status, 401)
     device.session.revokedAt = null
   })
+  await t.test('a raiz WebDAV informa apenas a cota da conta escolhida e atualiza a cota antiga', async () => {
+    const report = async () => (await request('PROPFIND', '', { Depth: '0' })).text()
+    assert.match(await report(), /<D:quota-used-bytes>2147483648<\/D:quota-used-bytes>/)
+    assert.match(await report(), /<D:quota-available-bytes>13958643712<\/D:quota-available-bytes>/)
+    assert.deepEqual(refreshedAccounts, [])
+    cachedQuota.lastSyncedAt = new Date(0)
+    assert.match(await report(), /<D:quota-used-bytes>3221225472<\/D:quota-used-bytes>/)
+    assert.deepEqual(refreshedAccounts, [accountId])
+    cachedQuota = { ...capacity, lastSyncedAt: new Date() }
+  })
   await t.test('arquivos binários, vazios, caminhos Windows e lixeira recuperável', async () => {
     assert.equal((await request('MKCOL', 'Fam%C3%ADlia')).status, 201)
     assert.equal((await request('MKCOL', 'CON')).status, 400)
@@ -183,6 +205,8 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
       await run('copyto', file, 'test:arquivo.txt')
       assert.match((await run('ls', 'test:')).stdout, /arquivo\.txt/)
       assert.equal((await run('cat', 'test:arquivo.txt')).stdout, 'conteudo do rclone')
+      const quota = JSON.parse((await run('about', 'test:', '--json')).stdout)
+      assert.deepEqual(quota, { total: 16_106_127_360, used: 2_147_483_648, free: 13_958_643_712 })
     } finally { await rm(temporary, { recursive: true, force: true }) }
   })
 })
