@@ -17,6 +17,7 @@ model User {
   status         String             @default("active") @db.VarChar(32)
   createdAt      DateTime           @default(now()) @map("created_at")
   updatedAt      DateTime           @updatedAt @map("updated_at")
+  discordLink    DiscordLink?
   sessions       UserSession[]
   authHandoffs   AuthHandoff[]
   providerConfigs ProviderConfig[]
@@ -36,6 +37,27 @@ model User {
   backupRoots BackupRoot[]
 
   @@map("users")
+}
+
+
+model DiscordLink {
+  userId        String    @id @map("user_id") @db.Char(36)
+  discordUserId String    @unique @map("discord_user_id") @db.VarChar(20)
+  verifiedAt    DateTime? @map("verified_at")
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("discord_links")
+}
+
+model DiscordLinkState {
+  stateHash String      @id @map("state_hash") @db.Char(64)
+  sessionId String      @map("session_id") @db.Char(36)
+  expiresAt DateTime    @map("expires_at")
+  session   UserSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([expiresAt])
+  @@map("discord_link_states")
 }
 
 model SecurityRateLimit {
@@ -92,6 +114,7 @@ model UserSession {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  discordStates    DiscordLinkState[]
   desktopDevice    DesktopDevice?
 
   @@index([userId])

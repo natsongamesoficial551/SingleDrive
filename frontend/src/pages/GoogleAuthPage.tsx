@@ -26,7 +26,7 @@ export function GoogleAuthPage() {
       if (pending.flow === 'connect') { navigate('/google-connected?status=success', { replace: true }); return }
       if (!data.accessToken || !data.user) throw new Error('Resposta de autenticação inválida.')
       setAuthSession(data.accessToken, data.user)
-      navigate('/all-files', { replace: true })
+      navigate(pending.returnTo === '/discord' ? '/discord' : '/all-files', { replace: true })
     })().catch(error => setMessage(error instanceof Error ? error.message : 'Falha na autorização.'))
   }, [navigate])
   return <main className="flex min-h-screen items-center justify-center bg-slate-50 p-5"><Card className="w-full max-w-sm p-6 text-center"><h1 className="text-xl font-bold">Autorização Google</h1><p className="mt-3 text-sm text-slate-600">{message}</p></Card></main>

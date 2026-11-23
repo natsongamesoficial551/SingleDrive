@@ -49,6 +49,7 @@ function authLimit(identifier: string, limit: number, windowMs: number) {
   })
 }
 
+export const discordLinkLimit = authLimit('discord-link-v1', 25, 15 * minute)
 export const googleStartLimit = authLimit('google-start-v3', 12, 15 * minute)
 export const googleCompleteLimit = authLimit('google-complete-v3', 40, 15 * minute)
 export const refreshLimit = rateLimit({

@@ -1,9 +1,9 @@
 import { apiFetch } from '@/lib/api'
 
-type Pending = { verifier: string; flow: 'login' | 'connect'; expiresAt: number }
+type Pending = { verifier: string; flow: 'login' | 'connect'; expiresAt: number; returnTo?: '/discord' }
 const prefix = 'sd:oauth:'
 export type GoogleAccessMode = 'essential' | 'full'
-export async function startGoogleAuth(flow: 'login' | 'connect', target: Window = window, accessMode: GoogleAccessMode = 'essential') {
+export async function startGoogleAuth(flow: 'login' | 'connect', target: Window = window, accessMode: GoogleAccessMode = 'essential', returnTo?: '/discord') {
   const verifier = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
   const codeChallenge = btoa(String.fromCharCode(...hash)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -11,7 +11,7 @@ export async function startGoogleAuth(flow: 'login' | 'connect', target: Window 
     method: 'POST', skipAuth: flow === 'login', body: JSON.stringify({ codeChallenge, accessMode }),
   })
   // Para popup, gravar no próprio contexto; sessionStorage não sincroniza abas.
-  target.sessionStorage.setItem(prefix + data.state, JSON.stringify({ verifier, flow, expiresAt: Date.now() + 10 * 60_000 } satisfies Pending))
+  target.sessionStorage.setItem(prefix + data.state, JSON.stringify({ verifier, flow, returnTo, expiresAt: Date.now() + 10 * 60_000 } satisfies Pending))
   target.location.assign(data.url)
 }
 

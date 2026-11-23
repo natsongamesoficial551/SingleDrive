@@ -7,6 +7,8 @@ import { signAccessToken } from '../../utils/jwt.js'
 import { oauthRouter, googleCallback, completeGoogleLogin } from './oauth.service.js'
 import { createSession, setRefreshCookie, clearRefreshCookie, readRefreshCookie } from './session.service.js'
 
+import { discordRouter } from '../discord/discord.routes.js'
+
 export const authRouter = Router()
 
 // Em produção o frontend acessa a API pelo proxy da mesma origem.
@@ -23,6 +25,7 @@ authRouter.post(['/login', '/register'], (_req, res) => {
   return res.status(410).json({ code: 'GOOGLE_LOGIN_ONLY', message: 'Entre com Google para acessar o SingleDrive.' })
 })
 
+authRouter.use('/discord', discordRouter)
 authRouter.use(oauthRouter)
 authRouter.get('/google/callback', googleCallback)
 authRouter.post('/google/complete', completeGoogleLogin(createSession))

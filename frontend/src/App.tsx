@@ -23,6 +23,8 @@ import { UploadProvider } from '@/context/UploadContext'
 import { ComputersPage } from '@/pages/ComputersPage'
 
 
+import { DiscordLinkPage } from '@/pages/DiscordLinkPage'
+
 function DriveApp() {
   const [ready, setReady] = useState(false)
   const [sessionError, setSessionError] = useState('')
@@ -60,6 +62,8 @@ function DriveApp() {
       <Routes>
       <Route path="login" element={getAccessToken() ? <Navigate to="/all-files" replace /> : <LoginPage />} />
       <Route path="register" element={<Navigate to="/login" replace />} />
+      <Route path="discord" element={<DiscordLinkPage />} />
+      <Route path="discord/callback" element={<DiscordLinkPage />} />
       <Route path="google-auth" element={<GoogleAuthPage />} />
       <Route path="google-connected" element={<GoogleConnectedPage />} />
       <Route path="public/files/:token" element={<PublicFilePage />} />

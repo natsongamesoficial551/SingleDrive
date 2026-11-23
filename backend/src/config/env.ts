@@ -15,6 +15,13 @@ const envSchema = z.object({
   MAX_UPLOAD_BYTES: z.coerce.number().default(5 * 1024 * 1024 * 1024),
   RECAPTCHA_SECRET_KEY: z.string().optional(),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  DISCORD_BOT_TOKEN: z.string().min(1).optional(),
+  DISCORD_CLIENT_SECRET: z.string().min(1).optional(),
+  DISCORD_CLIENT_ID: z.string().regex(/^\d{17,20}$/).optional(),
+  DISCORD_GUILD_ID: z.string().regex(/^\d{17,20}$/).optional(),
+  DISCORD_MEMBER_ROLE_ID: z.string().regex(/^\d{17,20}$/).optional(),
+  DISCORD_FOLLOWING_ROLE_ID: z.string().regex(/^\d{17,20}$/).optional(),
+  DISCORD_AUTO_MEMBER_ROLE: z.enum(['true', 'false']).default('false'),
   SYSTEM_ADMIN_USER_ID: z.string().uuid().optional(),
 })
 
