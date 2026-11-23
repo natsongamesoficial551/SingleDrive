@@ -549,7 +549,7 @@ internal sealed class BackupForm : Form
     private async Task RegisterDeviceAsync()
     {
         using var result = await AgentRequestAsync("desktop-devices/register", HttpMethod.Post,
-            new { name = Environment.MachineName, platform = "windows", appVersion = "0.4.0" });
+            new { name = Environment.MachineName, platform = "windows", appVersion = "0.5.0" });
         deviceId = result.RootElement.GetProperty("device").GetProperty("id").GetString();
     }
 
@@ -604,29 +604,25 @@ internal sealed class BackupForm : Form
             if (!diskEnabled && diskRootId is not null)
                 throw new IOException("Retome o acesso deste computador no site, em Computadores.");
             var linkedDevice = deviceId ?? throw new IOException("Vincule o PC novamente.");
-            string? selected = null;
-            if (diskRootId is null)
+            var createDisk = diskRootId is null;
+            if (createDisk)
             {
                 using var response = await AgentRequestAsync("connected-accounts", HttpMethod.Get, null);
-                var accounts = response.RootElement.GetProperty("accounts").EnumerateArray()
-                    .Where(item => item.GetProperty("provider").GetString() == "google_drive" && item.GetProperty("status").GetString() == "connected")
-                    .Select(item => new DiskAccount(item.GetProperty("id").GetString()!, item.GetProperty("email").GetString()!))
-                    .ToArray();
-                if (accounts.Length == 0)
+                var hasDrive = response.RootElement.GetProperty("accounts").EnumerateArray()
+                    .Any(item => item.GetProperty("provider").GetString() == "google_drive" && item.GetProperty("status").GetString() == "connected");
+                if (!hasDrive)
                 {
                     diskStatus.Text = "Conecte uma conta Google Drive em Configurações no site.";
                     Process.Start(new ProcessStartInfo(new Uri(ApiOrigin, "/settings").AbsoluteUri) { UseShellExecute = true });
                     return;
                 }
-                selected = ChooseDiskAccount(accounts);
-                if (selected is null) return;
             }
             await RemoteDiskMount.PrepareAsync(message => diskStatus.Text = message);
             if (exitRequested || deviceId != linkedDevice) return;
-            if (selected is not null)
+            if (createDisk)
             {
                 using var response = await AgentRequestAsync($"remote-disk/devices/{linkedDevice}", HttpMethod.Put,
-                    new { enabled = true, accountId = selected });
+                    new { enabled = true, poolEnabled = true });
             }
             diskConsent = true;
             openDiskWhenReady = true;
@@ -636,22 +632,6 @@ internal sealed class BackupForm : Form
         }
         catch (Exception ex) { diskStatus.Text = $"Disco remoto: {ex.Message}"; }
         finally { diskSetupBusy = false; SetDiskButtons(); }
-    }
-
-    private string? ChooseDiskAccount(DiskAccount[] accounts)
-    {
-        if (accounts.Length == 1) return accounts[0].Id;
-        using var dialog = new Form { Text = "Conta do disco remoto", Width = 460, Height = 165, StartPosition = FormStartPosition.CenterParent,
-            FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false };
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(12), WrapContents = false };
-        var list = new ComboBox { Width = 405, DropDownStyle = ComboBoxStyle.DropDownList, DataSource = accounts, DisplayMember = nameof(DiskAccount.Email) };
-        var ok = new Button { Text = "Criar unidade", Width = 115, DialogResult = DialogResult.OK };
-        panel.Controls.Add(new Label { Text = "Em qual conta Google Drive vamos guardar os arquivos?", AutoSize = true });
-        panel.Controls.Add(list);
-        panel.Controls.Add(ok);
-        dialog.Controls.Add(panel);
-        dialog.AcceptButton = ok;
-        return dialog.ShowDialog(this) == DialogResult.OK ? ((DiskAccount)list.SelectedItem!).Id : null;
     }
 
     private async Task UpdateRemoteDiskAsync(JsonElement policy)
@@ -795,7 +775,6 @@ internal sealed class BackupForm : Form
         else status.Text = value;
     }
 
-    private sealed record DiskAccount(string Id, string Email);
     private sealed record Settings(string Folder, string Cookie, bool LocalConsent, bool DiskConsent = false);
     private sealed record FileStamp(long Size, long ModifiedTicks);
 }

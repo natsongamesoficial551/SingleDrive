@@ -39,12 +39,17 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
     user: { status: 'active' },
   }
   const accountId = device.remoteDiskAccountId
+  const secondId = randomUUID()
+  const accounts = [{ id: accountId, userId: 'owner', provider: 'google_drive', status: 'connected' }]
+  root.accountId = accountId
   const capacity = { totalBytes: 16_106_127_360n, usedBytes: 2_147_483_648n }
   let cachedQuota = { ...capacity, lastSyncedAt: new Date() }
+  let secondQuota = { totalBytes: 32_212_254_720n, usedBytes: 1_073_741_824n, lastSyncedAt: new Date() }
   let refreshedAccounts = []
   const deviceMatches = where => (!where.id || where.id === device.id) && (!where.userId || where.userId === device.userId)
     && (!where.sessionId || where.sessionId === device.sessionId) && (!where.remoteDiskKeyHash || where.remoteDiskKeyHash === device.remoteDiskKeyHash)
     && (!where.remoteDiskEnabled || device.remoteDiskEnabled)
+  const matchingAccounts = where => accounts.filter(account => account.userId === where.userId && (!where.id || where.id === account.id))
   let failUpload = false
   const replace = (object, method, action) => {
     const original = object[method]
@@ -63,24 +68,24 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
     client: where.id.startsWith('pc') ? 'desktop' : 'web',
   }))
   replace(prisma.userSession, 'findUniqueOrThrow', async ({ where }) => ({ client: where.id.startsWith('pc') ? 'desktop' : 'web' }))
-  replace(prisma.connectedAccount, 'findFirst', async ({ where }) =>
-    where.id === accountId && where.userId === device.userId ? { id: accountId, provider: 'google_drive' } : null)
+  replace(prisma.connectedAccount, 'findFirst', async ({ where }) => matchingAccounts(where)[0] ?? null)
+  replace(prisma.connectedAccount, 'findMany', async ({ where }) => matchingAccounts(where))
   replace(prisma.storageAccount, 'findUnique', async ({ where }) => {
-    assert.equal(where.connectedAccountId, accountId)
-    return cachedQuota
+    return where.connectedAccountId === accountId ? cachedQuota : secondQuota
   })
   replace(quotaService, 'refreshAccountQuota', async account => {
     refreshedAccounts.push(account.id)
-    return { ...capacity, usedBytes: 3_221_225_472n }
+    return account.id === accountId ? { ...capacity, usedBytes: 3_221_225_472n } : secondQuota
   })
   replace(prisma.user, 'update', async () => ({}))
   replace(prisma, '$transaction', async action => action(prisma))
-  replace(googleService, 'getAuthedGoogleClient', async () => ({ getRequestHeaders: async () => new Headers() }))
-  replace(google, 'drive', () => ({ files: {
-    get: async ({ fileId }) => ({ data: entries.get(fileId) }),
+  replace(googleService, 'getAuthedGoogleClient', async account => ({ accountId: account.id, getRequestHeaders: async () => new Headers() }))
+  replace(google, 'drive', ({ auth }) => ({ files: {
+    get: async ({ fileId }) => ({ data: { ...entries.get(fileId) } }),
     list: async ({ q }) => ({ data: { files: q.includes('appProperties')
-      ? [root] : [...entries.values()].filter(item => !item.trashed && item.parents.includes(q.match(/^'([^']+)' in parents/)[1])) } }),
-    create: async ({ requestBody, media }) => ({ data: newFile({ mimeType: media?.mimeType ?? 'application/octet-stream', ...requestBody }) }),
+      ? [...entries.values()].filter(item => item.accountId === auth.accountId && item.appProperties?.singleDriveRemoteOwner === 'owner')
+      : [...entries.values()].filter(item => !item.trashed && item.parents.includes(q.match(/^'([^']+)' in parents/)[1])).map(item => ({ ...item })) } }),
+    create: async ({ requestBody, media }) => ({ data: newFile({ accountId: auth.accountId, mimeType: media?.mimeType ?? 'application/octet-stream', ...requestBody }) }),
     update: async ({ fileId, requestBody, media, addParents }) => {
       const item = entries.get(fileId)
       if (addParents) item.parents = [addParents]
@@ -105,7 +110,7 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
       const upload = uploads.get(url.searchParams.get('upload_id'))
       const content = Buffer.concat(chunks)
       if (upload.currentId) Object.assign(entries.get(upload.currentId), { content, size: String(content.length) })
-      else newFile({ ...upload.metadata, mimeType: 'application/octet-stream' }, content)
+      else newFile({ ...upload.metadata, mimeType: 'application/octet-stream', accountId: entries.get(upload.metadata.parents[0]).accountId }, content)
       return new Response(null, { status: 200 })
     }
     const data = entries.get(url.pathname.split('/').at(-1)).content
@@ -208,5 +213,34 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
       const quota = JSON.parse((await run('about', 'test:', '--json')).stdout)
       assert.deepEqual(quota, { total: 16_106_127_360, used: 2_147_483_648, free: 13_958_643_712 })
     } finally { await rm(temporary, { recursive: true, force: true }) }
+  })
+  await t.test('unifica cotas e pastas, distribui arquivos novos e preserva os existentes', async () => {
+    accounts.push({ id: secondId, userId: 'owner', provider: 'google_drive', status: 'connected' })
+    accounts.push({ id: randomUUID(), userId: 'foreign', provider: 'google_drive', status: 'connected' })
+    const report = async () => (await request('PROPFIND', '', { Depth: '0' })).text()
+    assert.match(await report(), /quota-available-bytes>13958643712/)
+    assert.equal((await request('MKCOL', 'Documentos')).status, 201)
+    assert.equal((await request('PUT', 'Documentos/antigo.txt', {}, 'primeira conta')).status, 201)
+    assert.equal((await settings('web', 'devices/' + device.id, 'PUT', { enabled: true, poolEnabled: true })).status, 200)
+    assert.match(await report(), /quota-available-bytes>45097156608/)
+    assert.equal((await request('PUT', 'Documentos/novo.txt', {}, 'segunda conta')).status, 201)
+    assert.equal([...entries.values()].find(item => item.name === 'novo.txt').accountId, secondId)
+    assert.equal((await request('PUT', 'Documentos/antigo.txt', {}, 'editado')).status, 204)
+    assert.equal([...entries.values()].find(item => item.name === 'antigo.txt').accountId, accountId)
+    const listing = await (await request('PROPFIND', 'Documentos/', { Depth: '1' })).text()
+    assert.match(listing, /Documentos\/antigo\.txt/)
+    assert.match(listing, /Documentos\/novo\.txt/)
+    assert.equal(await (await request('GET', 'Documentos/novo.txt')).text(), 'segunda conta')
+    assert.equal((await request('MOVE', 'Documentos/', { Destination: '/remote-disk/dav/Documentos%202/' })).status, 201)
+    assert.equal(await (await request('GET', 'Documentos%202/antigo.txt')).text(), 'editado')
+    assert.equal(await (await request('GET', 'Documentos%202/novo.txt')).text(), 'segunda conta')
+    const roots = await settings('web', 'devices/' + device.id + '/roots', 'GET')
+    assert.deepEqual((await roots.json()).roots.map(item => item.accountId), [accountId, secondId])
+    assert.equal((await settings('foreign', 'devices/' + device.id + '/roots', 'GET')).status, 404)
+    assert.equal((await request('DELETE', 'Documentos%202/')).status, 204)
+    assert.equal((await request('GET', 'Documentos%202/novo.txt')).status, 409)
+    cachedQuota = { ...cachedQuota, usedBytes: cachedQuota.totalBytes - 1n }
+    secondQuota = { ...secondQuota, usedBytes: secondQuota.totalBytes - 1n }
+    assert.equal((await request('PUT', 'nao-cabe.txt', {}, 'ab')).status, 507)
   })
 })

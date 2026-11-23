@@ -12,6 +12,44 @@ type Device = {
   sourceNames: string[]; uploadedFiles: number; lastSeenAt: string; lastBackupAt: string | null
   revoked: boolean; online: boolean
   remoteDiskEnabled?: boolean; remoteDiskAccountId?: string | null; remoteDiskRootId?: string | null; remoteDiskMounted?: boolean
+  remoteDiskPoolEnabled?: boolean
+}
+
+type DiskRoot = { accountId: string; rootId: string }
+
+function DiskFiles({ device, accounts }: { device: Device; accounts: GoogleDriveAccount[] }) {
+  const [roots, setRoots] = useState<DiskRoot[]>([])
+  const [selected, setSelected] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    apiFetch<{ roots: DiskRoot[]; unavailableAccounts: number }>('/remote-disk/devices/' + device.id + '/roots')
+      .then(result => {
+        if (!active) return
+        setRoots(result.roots)
+        setSelected(result.roots[0]?.accountId ?? '')
+        if (result.unavailableAccounts) setError('Algumas contas Google Drive estão indisponíveis.')
+      })
+      .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Não foi possível carregar o disco.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [device.id])
+
+  const root = roots.find(item => item.accountId === selected)
+  const account = accounts.find(item => item.id === selected)
+  return <>
+    {loading && <p className="mt-3 text-sm text-slate-500">Buscando os arquivos do disco…</p>}
+    {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+    {!loading && !error && !roots.length && <p className="mt-3 text-sm text-slate-500">O disco ainda está vazio.</p>}
+    {roots.length > 1 && <label className="mt-3 grid max-w-sm gap-1 text-sm font-semibold">Ver os arquivos da conta
+      <select className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-slate-900" onChange={event => setSelected(event.target.value)} value={selected}>
+        {roots.map(item => <option key={item.accountId} value={item.accountId}>{accounts.find(account => account.id === item.accountId)?.email}</option>)}
+      </select>
+    </label>}
+    {root && account && <GoogleDriveBrowser key={root.rootId} accounts={[account]} remoteRootId={root.rootId} />}
+  </>
 }
 
 const statuses: Record<string, string> = { idle: 'Aguardando', paused: 'Pausado', scanning: 'Conferindo arquivos', uploading: 'Enviando arquivos', error: 'Precisa de atenção no PC' }
@@ -21,7 +59,6 @@ export function ComputersPage() {
   const [devices, setDevices] = useState<Device[]>([])
   const [accounts, setAccounts] = useState<GoogleDriveAccount[]>([])
   const [accountError, setAccountError] = useState('')
-  const [selections, setSelections] = useState<Record<string, string>>({})
   const [diskBrowser, setDiskBrowser] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
@@ -64,16 +101,21 @@ export function ComputersPage() {
     finally { setBusy(null) }
   }
 
-  async function changeDisk(device: Device) {
+  async function changeDisk(device: Device, joinAccounts = false) {
     setBusy(device.id)
     setMessage('')
     try {
-      const accountId = device.remoteDiskAccountId ?? selections[device.id] ?? accounts[0]?.id
-      const enabled = !device.remoteDiskEnabled
+      const enabled = joinAccounts ? !!device.remoteDiskEnabled : !device.remoteDiskEnabled
+      const enablePool = joinAccounts || !device.remoteDiskAccountId
       await apiFetch('/remote-disk/devices/' + device.id, {
-        method: 'PUT', body: JSON.stringify({ enabled, ...(enabled && accountId ? { accountId } : {}) }),
+        method: 'PUT', body: JSON.stringify({
+          enabled, ...(enablePool ? { poolEnabled: true } : {}),
+          ...(!device.remoteDiskAccountId && accounts[0] ? { accountId: accounts[0].id } : {}),
+        }),
       })
-      setMessage(enabled ? 'Disco liberado. No PC, abra o aplicativo e clique em Conectar disco remoto.' : 'Acesso do PC ao disco pausado. Os arquivos continuam no Google Drive.')
+      setMessage(joinAccounts ? 'Contas Google Drive unificadas neste disco.' : enabled
+        ? 'Disco liberado. No PC, abra o aplicativo e clique em Conectar disco remoto.'
+        : 'Acesso do PC ao disco pausado. Os arquivos continuam no Google Drive.')
       await load()
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Não foi possível configurar o disco remoto.') }
     finally { setBusy(null) }
@@ -97,7 +139,8 @@ export function ComputersPage() {
     {message && <p role="status" className="mt-5 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">{message}</p>}
     <div className="mt-6 grid gap-4">
       {loading ? <Card className="p-6 text-sm text-slate-500">Carregando computadores…</Card> : devices.length === 0 ? <Card className="border-dashed p-8 text-center"><Monitor className="mx-auto h-9 w-9 text-blue-500" /><p className="mt-3 font-bold">Nenhum computador vinculado</p><p className="mt-2 text-sm text-slate-500">Depois de entrar no agente Windows, seu computador aparecerá aqui.</p></Card> : devices.map(device => {
-        const diskAccount = accounts.find(account => account.id === device.remoteDiskAccountId)
+        const original = accounts.find(account => account.id === device.remoteDiskAccountId)
+        const diskAccounts = device.remoteDiskPoolEnabled ? accounts : original ? [original] : []
         const canEdit = !device.revoked && device.remoteDiskEnabled !== undefined
         return <Card key={device.id} className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -113,28 +156,26 @@ export function ComputersPage() {
           <p>Último contato: {date(device.lastSeenAt)}</p>
           <p>Última conferência concluída: {device.lastBackupAt ? date(device.lastBackupAt) : 'Aguardando'}</p>
         </div>
-        {(canEdit || diskAccount) && <section className="mt-5 rounded-xl border border-slate-200 p-4" aria-label="Disco remoto">
+        {(canEdit || diskAccounts.length > 0) && <section className="mt-5 rounded-xl border border-slate-200 p-4" aria-label="Disco remoto">
           <h3 className="flex items-center gap-2 font-bold"><HardDrive className="h-4 w-4 text-blue-600" />Disco remoto</h3>
           <p className="mt-2 text-sm text-slate-600">{device.remoteDiskEnabled
             ? device.remoteDiskMounted ? 'Unidade montada no Explorador de Arquivos.' : 'Autorizado. Aguardando conexão no Windows.'
-            : device.remoteDiskAccountId ? 'Acesso deste PC pausado.' : 'Escolha onde salvar os arquivos desta unidade.'}</p>
+            : device.remoteDiskAccountId ? 'Acesso deste PC pausado.' : 'A unidade usa as contas Google Drive conectadas ao SingleDrive.'}</p>
           {canEdit && <div className="mt-3 flex flex-wrap items-center gap-2">
-            {!device.remoteDiskAccountId && accounts.length > 0 && <label className="grid gap-1 text-sm font-semibold">Conta Google Drive
-              <select className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-slate-900" value={selections[device.id] ?? accounts[0].id} onChange={event => setSelections(current => ({ ...current, [device.id]: event.target.value }))}>
-                {accounts.map(account => <option key={account.id} value={account.id}>{account.email}</option>)}
-              </select>
-            </label>}
-            {!!(device.remoteDiskAccountId || accounts.length) && <Button variant="outline" className="self-end" disabled={busy === device.id || (!device.remoteDiskEnabled && !!device.remoteDiskAccountId && !diskAccount)} onClick={() => void changeDisk(device)}>
+            {!!(device.remoteDiskAccountId || accounts.length) && <Button variant="outline" className="self-end" disabled={busy === device.id || (!device.remoteDiskEnabled && !!device.remoteDiskAccountId && !diskAccounts.length)} onClick={() => void changeDisk(device)}>
               {device.remoteDiskEnabled ? 'Pausar disco' : device.remoteDiskAccountId ? 'Retomar disco' : 'Ativar disco'}
             </Button>}
+            {device.remoteDiskPoolEnabled === false && device.remoteDiskAccountId && accounts.length > 0 && <Button variant="outline" disabled={busy === device.id} onClick={() => void changeDisk(device, true)}>Unir contas Google Drive</Button>}
             {device.remoteDiskEnabled && <a href="singledrive-desktop://backup" className="self-end rounded-xl px-3 py-2 text-sm font-bold text-blue-700">Abrir aplicativo Windows</a>}
           </div>}
-          {diskAccount && <p className="mt-2 break-all text-sm text-slate-600">{diskAccount.email}</p>}
-          {canEdit && !diskAccount && (device.remoteDiskAccountId || !accounts.length) && <p className="mt-2 text-sm text-slate-600">{accountError || 'Conecte a conta Google Drive em Configurações.'} <Link to="/settings" className="font-semibold text-blue-700">Configurações</Link></p>}
-          {diskAccount && device.remoteDiskRootId && <Button variant="outline" className="mt-3" onClick={() => setDiskBrowser(current => current === device.id ? null : device.id)}>
+          {diskAccounts.length > 0 && <p className="mt-2 break-words text-sm text-slate-600">{diskAccounts.map(item => item.email).join(', ')}</p>}
+          {canEdit && <p className="mt-2 text-sm text-slate-600">{accountError && <span>{accountError} </span>}<Link to="/settings" className="font-semibold text-blue-700">Gerenciar contas Google Drive</Link></p>}
+          {diskAccounts.length > 0 && device.remoteDiskRootId && <Button variant="outline" className="mt-3" onClick={() => setDiskBrowser(current => current === device.id ? null : device.id)}>
             {diskBrowser === device.id ? 'Fechar arquivos' : 'Ver arquivos do disco'}
           </Button>}
-          {diskBrowser === device.id && diskAccount && device.remoteDiskRootId && <GoogleDriveBrowser key={device.remoteDiskRootId} accounts={[diskAccount]} remoteRootId={device.remoteDiskRootId} />}
+          {diskBrowser === device.id && diskAccounts.length > 0 && device.remoteDiskRootId && (device.remoteDiskPoolEnabled
+            ? <DiskFiles device={device} accounts={diskAccounts} />
+            : <GoogleDriveBrowser key={device.remoteDiskRootId} accounts={diskAccounts} remoteRootId={device.remoteDiskRootId} />)}
         </section>}
         {!device.revoked && <div className="mt-5 flex flex-wrap gap-2">
           <Button variant="outline" disabled={busy === device.id} onClick={() => void change(device)}>{device.backupEnabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}{device.backupEnabled ? 'Pausar backup' : 'Retomar backup'}</Button>

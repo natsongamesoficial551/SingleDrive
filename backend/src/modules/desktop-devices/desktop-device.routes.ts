@@ -15,6 +15,7 @@ function serialize(device: DesktopDevice, session: { revokedAt: Date | null; exp
     sourceNames: device.sourceNames, uploadedFiles: device.uploadedFiles,
     lastSeenAt: device.lastSeenAt, lastBackupAt: device.lastBackupAt, createdAt: device.createdAt,
     remoteDiskEnabled: device.remoteDiskEnabled, remoteDiskAccountId: device.remoteDiskAccountId,
+    remoteDiskPoolEnabled: device.remoteDiskPoolEnabled,
     remoteDiskRootId: device.remoteDiskRootId,
     remoteDiskMounted: !!device.remoteDiskEnabled && !!device.remoteDiskMounted && !revoked && Date.now() - device.lastSeenAt.getTime() < 90_000,
     revoked, online: !revoked && Date.now() - device.lastSeenAt.getTime() < 90_000,

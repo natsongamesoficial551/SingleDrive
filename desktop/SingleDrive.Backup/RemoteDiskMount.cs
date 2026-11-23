@@ -9,6 +9,7 @@ internal sealed class RemoteDiskMount : IDisposable
 {
     // O envio segue direto ao backend para evitar o limite de corpo do proxy Pages.
     private const string DavUrl = "https://singledrive.onrender.com/remote-disk/dav/";
+    private const string WinFspInstallerHash = "36CE01F9EEDBBE6842B7FB4BEDC79D7D4F71983E8ACEB6877B46A07B331C7E19";
     private readonly Process process;
     public string DriveLetter { get; }
     public bool Running => !process.HasExited;
@@ -76,7 +77,11 @@ internal sealed class RemoteDiskMount : IDisposable
         if (!HasWinFsp())
         {
             status("Instalando WinFsp. Confirme o instalador do Windows quando solicitado.");
-            await InstallAsync("WinFsp.WinFsp", "WinFsp", "https://winfsp.dev/rel/");
+            var bundledInstaller = Path.Combine(AppContext.BaseDirectory, "WinFsp.msi");
+            if (File.Exists(bundledInstaller))
+                await InstallBundledWinFspAsync(bundledInstaller);
+            else
+                await InstallAsync("WinFsp.WinFsp", "WinFsp", "https://winfsp.dev/rel/");
             if (!HasWinFsp()) throw new IOException("Conclua a instalação do WinFsp para montar a unidade.");
         }
         if (FindRclone() is null)
@@ -93,6 +98,23 @@ internal sealed class RemoteDiskMount : IDisposable
         using var settings = machine.OpenSubKey(@"SOFTWARE\WinFsp");
         return settings?.GetValue("InstallDir") is string directory
             && File.Exists(Path.Combine(directory, "bin", "winfsp-x64.dll"));
+    }
+
+    private static async Task InstallBundledWinFspAsync(string path)
+    {
+        // Mantém o instalador somente para leitura até o msiexec terminar.
+        await using var file = File.OpenRead(path);
+        if (Convert.ToHexString(await SHA256.HashDataAsync(file)) != WinFspInstallerHash)
+            throw new IOException("O instalador do WinFsp foi alterado. Reinstale o SingleDrive.");
+
+        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "msiexec.exe")) { UseShellExecute = false };
+        foreach (var argument in new[] { "/i", path, "/norestart" }) start.ArgumentList.Add(argument);
+        using var installer = Process.Start(start) ?? throw new IOException("Não foi possível abrir a instalação do WinFsp.");
+        await installer.WaitForExitAsync();
+        if (installer.ExitCode is 3010 or 1641)
+            throw new IOException("Reinicie o Windows para concluir a instalação do WinFsp.");
+        if (installer.ExitCode != 0)
+            throw new IOException($"O Windows encerrou a instalação do WinFsp (código {installer.ExitCode}).");
     }
 
     private static async Task InstallAsync(string package, string name, string officialUrl)

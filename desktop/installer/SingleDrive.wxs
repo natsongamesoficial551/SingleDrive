@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="SingleDrive" Manufacturer="SingleDrive" Version="$(var.ProductVersion)"
+           UpgradeCode="3915B179-68F8-4DA4-AA1E-F8F08DB2E8F0" Scope="perMachine"
+           InstallerVersion="500" Language="1046">
+    <MajorUpgrade DowngradeErrorMessage="Uma versão mais recente do SingleDrive já está instalada." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="mszip" />
+    <Property Id="ARPHELPLINK" Value="https://singledrive.pages.dev/" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="SingleDrive" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="SingleDriveApp" Title="SingleDrive" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+    </Feature>
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
+      <Component Id="SingleDriveExecutable">
+        <File Id="SingleDriveExe" Source="$(var.Payload)\SingleDrive.Desktop.exe" KeyPath="yes">
+          <Shortcut Id="SingleDriveStartMenu" Directory="ProgramMenuFolder" Name="SingleDrive"
+                    WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
+          <Shortcut Id="SingleDriveDesktop" Directory="DesktopFolder" Name="SingleDrive"
+                    WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
+        </File>
+      </Component>
+      <File Source="$(var.Payload)\rclone.exe" />
+      <File Source="$(var.Payload)\WinFsp.msi" />
+      <File Source="$(var.Payload)\Licenca-SingleDrive.txt" />
+      <File Source="$(var.Payload)\Licenca-rclone.txt" />
+      <File Source="$(var.Payload)\Licenca-WinFsp.txt" />
+      <File Source="$(var.Payload)\WinFsp-v2.2-source.tar.gz" />
+    </ComponentGroup>
+  </Fragment>
+</Wix>
