@@ -6,11 +6,12 @@ import { DriveLayout } from '@/layouts/DriveLayout'
 import { AllFilesPage } from '@/pages/AllFilesPage'
 import { ArchivedPage } from '@/pages/ArchivedPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { LandingPage } from '@/pages/LandingPage'
+import { getAccessToken } from '@/lib/auth'
 import { GoogleAuthPage } from '@/pages/GoogleAuthPage'
 import { GoogleConnectedPage } from '@/pages/GoogleConnectedPage'
 import { QuotaTrackerPage } from '@/pages/QuotaTrackerPage'
 import { RecentPage } from '@/pages/RecentPage'
-import { RegisterPage } from '@/pages/RegisterPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { SharedPage } from '@/pages/SharedPage'
 import { StarredPage } from '@/pages/StarredPage'
@@ -22,7 +23,7 @@ import { UploadProvider } from '@/context/UploadContext'
 import { ComputersPage } from '@/pages/ComputersPage'
 
 
-function App() {
+function DriveApp() {
   const [ready, setReady] = useState(false)
   const [sessionError, setSessionError] = useState('')
   const [waitingSeconds, setWaitingSeconds] = useState(0)
@@ -57,15 +58,14 @@ function App() {
   return (
     <UploadProvider>
       <Routes>
-      <Route path="login" element={<LoginPage />} />
-      <Route path="register" element={<RegisterPage />} />
+      <Route path="login" element={getAccessToken() ? <Navigate to="/all-files" replace /> : <LoginPage />} />
+      <Route path="register" element={<Navigate to="/login" replace />} />
       <Route path="google-auth" element={<GoogleAuthPage />} />
       <Route path="google-connected" element={<GoogleConnectedPage />} />
       <Route path="public/files/:token" element={<PublicFilePage />} />
       <Route path="public/files/:token/embed" element={<PublicFilePage embed />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<DriveLayout />}>
-          <Route index element={<Navigate to="/all-files" replace />} />
           <Route path="all-files" element={<AllFilesPage />} />
           <Route path="quota" element={<QuotaTrackerPage />} />
           <Route path="shared" element={<SharedPage />} />
@@ -85,5 +85,9 @@ function App() {
   )
 }
 
-
-export default App
+export default function App() {
+  return <Routes>
+    <Route index element={<LandingPage />} />
+    <Route path="*" element={<DriveApp />} />
+  </Routes>
+}

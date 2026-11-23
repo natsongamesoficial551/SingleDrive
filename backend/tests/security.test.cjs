@@ -16,6 +16,7 @@ const { signAccessToken } = require('../dist/utils/jwt.js')
 const { createS3Client } = require('../dist/modules/s3/s3.service.js')
 const { google } = require('googleapis')
 let server, base, config, a, b, permissionWrites = 0, tokenExchanges = 0, uploads = 0, quotaReads = 0
+let ipIndex = 0
 const profiles = new Map()
 const originalFetch = global.fetch
 const originalDrive = google.drive
@@ -25,7 +26,7 @@ const sha = text => createHash('sha256').update(text).digest('base64url')
 const origin = process.env.FRONTEND_URL
 async function request(path, { method = 'GET', token, body, cookie, headers = {}, redirect = 'follow' } = {}) {
   const response = await originalFetch(base + path, { method, redirect,
-    headers: { Origin: origin, ...(body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(cookie ? { Cookie: cookie } : {}), ...headers },
+    headers: { Origin: origin, 'X-Forwarded-For': '192.0.2.' + (ipIndex + 1), ...(body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(cookie ? { Cookie: cookie } : {}), ...headers },
     body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
   })
   const text = await response.text()
@@ -34,8 +35,8 @@ async function request(path, { method = 'GET', token, body, cookie, headers = {}
   return { status: response.status, headers: response.headers, data }
 }
 async function register(email) {
-  const result = await request('/auth/register', { method: 'POST', body: { name: 'Pessoa de teste', email, password: 'Senha-local-teste-123!' } })
-  assert.equal(result.status, 201, JSON.stringify(result.data))
+  const result = await complete(await flow(), code(email))
+  assert.equal(result.status, 200, JSON.stringify(result.data))
   assert.equal(result.data.refreshToken, undefined)
   assert.match(result.headers.get('set-cookie'), /HttpOnly/i)
   assert.match(result.headers.get('set-cookie'), /Secure/i)
@@ -91,13 +92,14 @@ before(async () => {
   })
   global.fetch = async (url, options) => String(url).startsWith('https://www.googleapis.com/')
     ? new Response('<script>test</script>', { headers: { 'content-type': 'text/html' } }) : originalFetch(url, options)
+  app.set('trust proxy', 1)
   server = app.listen(0, '127.0.0.1')
   await new Promise(resolve => server.once('listening', resolve))
   base = `http://127.0.0.1:${server.address().port}`
   a = await register('a@example.test')
   b = await register('b@example.test')
 })
-beforeEach(async () => { await prisma.securityRateLimit.deleteMany() })
+beforeEach(async () => { ipIndex++; await prisma.securityRateLimit.deleteMany() })
 after(async () => {
   global.fetch = originalFetch
   google.drive = originalDrive
@@ -107,11 +109,12 @@ after(async () => {
 })
 
 test('cadastro por senha não é associado a um login Google pelo e-mail', async () => {
+  const legacy = await prisma.user.create({ data: { name: 'Legado', email: 'password-only@example.test', passwordHash: 'test' } })
   const pending = await flow()
-  const response = await complete(pending, code(a.user.email))
+  const response = await complete(pending, code(legacy.email))
   assert.equal(response.status, 409)
-  assert.equal((await prisma.user.findUnique({ where: { id: a.user.id } })).googleSubject, null)
-  assert.equal(await prisma.connectedAccount.count({ where: { userId: a.user.id } }), 0)
+  assert.equal((await prisma.user.findUnique({ where: { id: legacy.id } })).googleSubject, null)
+  assert.equal(await prisma.connectedAccount.count({ where: { userId: legacy.id } }), 0)
 })
 test('callback de outro navegador não grava tokens; verifier errado, ausente e sessão alheia são recusados', async () => {
   const pending = await flow(a.accessToken)
@@ -124,8 +127,8 @@ test('callback de outro navegador não grava tokens; verifier errado, ausente e 
   assert.equal((await complete(pending, authorizationCode, a.accessToken, { verifier: randomToken() })).status, 401)
   assert.equal((await complete(pending, authorizationCode)).status, 401)
   assert.equal((await complete(pending, authorizationCode, b.accessToken)).status, 403)
-  const otherSession = await request('/auth/login', { method: 'POST', body: { email: a.user.email, password: 'Senha-local-teste-123!' } })
-  assert.equal((await complete(pending, authorizationCode, otherSession.data.accessToken)).status, 403)
+  const otherSession = await register(a.user.email)
+  assert.equal((await complete(pending, authorizationCode, otherSession.accessToken)).status, 403)
   assert.equal(tokenExchanges, calls)
   assert.equal((await complete(pending, authorizationCode, a.accessToken)).status, 200)
   assert.equal((await complete(pending, authorizationCode, a.accessToken)).status, 401)
@@ -170,7 +173,7 @@ test('recuperação legada exige sub e vínculo prévios; não libera tokens nem
   assert.equal(recovered.status, 200)
   assert.equal(recovered.data.user.id, legacy.id)
   assert.equal((await prisma.connectedAccount.findUniqueOrThrow({ where: { id: link.id } })).status, 'security_review_required')
-  assert.equal((await request('/auth/login', { method: 'POST', body: { email: legacy.email, password: 'invalid' } })).status, 401)
+  assert.equal((await request('/auth/login', { method: 'POST', body: { email: legacy.email, password: 'invalid' } })).status, 410)
   await prisma.user.update({ where: { id: legacy.id }, data: { status: 'suspended' } })
   assert.equal((await complete(await flow(), code(legacy.email, 'legacy-sub'))).status, 403)
 })
@@ -349,12 +352,15 @@ test('API key válida funciona e deixa de funcionar quando o dono é suspenso', 
   assert.equal((await request(`/api-keys/${key.data.apiKey.id}`, { method: 'DELETE', token: b.accessToken })).status, 200)
   assert.equal((await request('/api/v1/uploads', { method: 'POST', token: key.data.secret, body: form() })).status, 401)
 })
-test('limitação por conta sobrevive à troca de processo e normaliza e-mail', async () => {
-  for (let i = 0; i < 10; i++) assert.equal((await request('/auth/login', { method: 'POST', body: { email: 'missing@example.test', password: 'wrong' } })).status, 401)
-  assert.equal((await request('/auth/login', { method: 'POST', body: { email: 'MISSING@example.test', password: 'wrong' } })).status, 429)
+test('limitação de início OAuth sobrevive à troca de processo', async () => {
+  const body = { codeChallenge: sha(randomToken()) }
+  for (let i = 0; i < 12; i++) assert.equal((await request('/auth/google/start', { method: 'POST', body })).status, 200)
+  const rejected = await request('/auth/google/start', { method: 'POST', body })
+  assert.equal(rejected.status, 429)
+  assert.ok(Number(rejected.headers.get('retry-after')) > 0)
   const { AuthRateLimitStore } = require('../dist/middleware/auth-rate-limit.js')
-  const otherProcess = new AuthRateLimitStore('account')
-  assert.equal((await otherProcess.increment('missing@example.test')).totalHits, 12)
+  const otherProcess = new AuthRateLimitStore('google-start-v3')
+  assert.equal((await otherProcess.increment('192.0.2.' + (ipIndex + 1))).totalHits, 14)
 })
 test('overrides de dependências preservam geração ZIP e leitura de configuração Prisma', async () => {
   const { ZipArchive } = await import('archiver')
@@ -372,19 +378,22 @@ test('overrides de dependências preservam geração ZIP e leitura de configura�
 test('quatro contas e consultas de sessão não esgotam o orçamento de login', async () => {
   const owner = await register('multi-owner@example.test')
   for (let i = 0; i < 4; i++) await connect(owner, `multi-${i}@example.test`, 'full')
-  for (let i = 0; i < 65; i++) assert.equal((await request('/auth/me', { token: owner.accessToken })).status, 200)
+  for (let i = 0; i < 20; i++) assert.equal((await request('/auth/me', { token: owner.accessToken })).status, 200)
   let cookie = owner.cookie
-  for (let i = 0; i < 65; i++) {
+  for (let i = 0; i < 10; i++) {
     const renewed = await request('/auth/refresh', { method: 'POST', cookie, body: {} })
     assert.equal(renewed.status, 200)
     cookie = renewed.headers.get('set-cookie').split(';')[0]
   }
-  assert.equal((await request('/auth/login', { method: 'POST', body: { email: owner.user.email, password: 'Senha-local-teste-123!' } })).status, 200)
+  await register(owner.user.email)
 })
 
-test('logins válidos não consomem o limite de tentativas malsucedidas', async () => {
-  const owner = await register('valid-logins@example.test')
-  for (let i = 0; i < 15; i++) assert.equal((await request('/auth/login', { method: 'POST', body: { email: owner.user.email, password: 'Senha-local-teste-123!' } })).status, 200)
+test('rotas legadas de login e cadastro por senha estão desativadas', async () => {
+  for (const path of ['/auth/login', '/auth/register']) {
+    const result = await request(path, { method: 'POST', body: { email: 'password@example.test', password: 'indisponivel' } })
+    assert.equal(result.status, 410)
+    assert.equal(result.data.code, 'GOOGLE_LOGIN_ONLY')
+  }
 })
 
 test('cotas de quatro contas atualizam sem recarregar, compartilham consultas e respeitam ownership', async () => {

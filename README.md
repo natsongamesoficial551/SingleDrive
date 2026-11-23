@@ -93,7 +93,9 @@ Try the live preview at **[9drive.zenhosta.com](https://9drive.zenhosta.com)**.
 - In-app API docs with cURL and JavaScript examples.
 
 **Accounts and admin**
-- Cadastro por senha (reCAPTCHA opcional) ou login Google. O login verifica a identidade; a conexão ao Drive é feita separadamente em Configurações, com acesso Essencial (`drive.file`) ou Completo (`drive`).
+- Cadastro e login com Google. Conecte o Drive separadamente em Configurações, com acesso Essencial (`drive.file`) ou Completo (`drive`).
+- Até 100 perfis no SingleDrive, 100 conexões de armazenamento por perfil e 10 PCs vinculados por perfil.
+- [Baixe o instalador MSI para Windows](https://singledrive.pages.dev/) na página inicial. O aplicativo abre diretamente no login.
 - Google OAuth credentials can be set in **Settings**. No `.env` editing needed.
 - Backup/restore and one-click updates from Settings (for PM2 setups).
 
@@ -272,7 +274,6 @@ Either way, the credentials are encrypted and stored in MySQL as one global conf
 | Variable | What it does |
 | --- | --- |
 | `VITE_API_URL` | Backend URL. Vite bakes it in at build time, so **rebuild the frontend after changing it**. |
-| `VITE_RECAPTCHA_SITE_KEY` | Optional reCAPTCHA site key. Leave it empty to turn captcha off. Also baked in at build time. |
 
 Captcha only turns on when **both** `VITE_RECAPTCHA_SITE_KEY` and `RECAPTCHA_SECRET_KEY` are set.
 
@@ -368,7 +369,7 @@ Authenticated routes expect `Authorization: Bearer <accessToken>`.
 ```txt
 Health        GET  /health
 
-Auth          POST /auth/register · POST /auth/login · POST /auth/refresh · POST /auth/logout · GET /auth/me
+Auth          POST /auth/google/start · POST /auth/google/complete · POST /auth/refresh · POST /auth/logout · GET /auth/me
               GET  /auth/google/url · GET /auth/google/callback · POST /auth/google/exchange
 
 Accounts      GET  /connected-accounts · DELETE /connected-accounts/:id · POST /connected-accounts/:id/sync-quota

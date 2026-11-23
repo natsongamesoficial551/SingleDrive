@@ -18,12 +18,15 @@ import { auditLogRouter } from './modules/audit-logs/audit-log.routes.js'
 import { systemRouter } from './modules/system/system.routes.js'
 import { remoteDiskDavRouter, remoteDiskSettingsRouter } from './modules/desktop-devices/remote-disk.routes.js'
 import { desktopDeviceRouter } from './modules/desktop-devices/desktop-device.routes.js'
-import { rateLimit } from 'express-rate-limit'
-import { AuthRateLimitStore } from './middleware/auth-rate-limit.js'
+import { googleCompleteLimit, googleStartLimit, refreshLimit, requestLimit, serviceLimit } from './middleware/request-limits.js'
 
 export const app = express()
 app.disable('x-powered-by')
 app.set('trust proxy', env.TRUST_PROXY_HOPS === 0 ? false : env.TRUST_PROXY_HOPS)
+app.use(requestLimit, serviceLimit)
+app.use(['/auth/google/start', '/auth/google/connect'], googleStartLimit)
+app.use(['/auth/google/complete', '/auth/google/callback', '/connected-accounts/google/callback'], googleCompleteLimit)
+app.use('/auth/refresh', refreshLimit)
 
 // WebDAV usa corpos binários e métodos próprios, inclusive OPTIONS.
 app.use('/remote-disk/dav', remoteDiskDavRouter)
@@ -41,19 +44,6 @@ app.use((_req, res, next) => {
   res.setHeader('Content-Security-Policy', `default-src 'none'; base-uri 'none'; frame-ancestors ${new URL(env.FRONTEND_URL).origin}; sandbox`)
   next()
 })
-// Consultas /me e rotação de sessão não são tentativas de login.
-// Manter o orçamento de entradas OAuth separado das tentativas de senha.
-app.use(['/auth/google/start', '/auth/google/complete'], rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false,
-  store: new AuthRateLimitStore('oauth-ip-v2'),
-  message: { code: 'AUTH_RATE_LIMITED', message: 'Muitas tentativas. Aguarde antes de tentar novamente.' } }))
-app.use(['/auth/login', '/auth/register'], rateLimit({ windowMs: 15 * 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false,
-  store: new AuthRateLimitStore('password-ip-v2'), skipSuccessfulRequests: true,
-  message: { code: 'AUTH_RATE_LIMITED', message: 'Muitas tentativas. Aguarde antes de tentar novamente.' } }))
-app.use(['/auth/login', '/auth/register'], rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false,
-  store: new AuthRateLimitStore('account'), keyGenerator: req => String(req.body?.email ?? '').trim().toLowerCase().slice(0, 191),
-  skipSuccessfulRequests: true,
-  message: { code: 'AUTH_RATE_LIMITED', message: 'Muitas tentativas. Aguarde antes de tentar novamente.' } }))
-
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 app.use('/api', publicApiRouter)
 app.use('/public', publicRouter)

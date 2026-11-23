@@ -5,7 +5,7 @@ import { env } from '../../config/env.js'
 import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
 import { encryptText, hashToken, randomToken } from '../../utils/crypto.js'
-import { hashPassword } from '../../utils/password.js'
+import { registerGoogleProfile, reserveStorageAccount } from './account-capacity.js'
 import { createOAuthClient, syncGoogleQuota } from '../google/google.service.js'
 import { setRefreshCookie } from './session.service.js'
 import { normalizeOAuthFlow, oauthReturnTarget, persistedOAuthFlow } from './oauth-client.js'
@@ -69,7 +69,7 @@ export function completeGoogleLogin(createSession: (userId: string, req: AuthReq
       if (flow === 'connect') {
         // Não aceitar apenas o verifier: a sessão autenticada iniciadora também deve continuar válida.
         let authenticated = false
-        await requireAuth(req, res, () => { authenticated = true })
+        await requireAuth(req, res, error => { if (error) throw error; authenticated = true })
         if (!authenticated) return
         if (req.user!.id !== state.userId || req.user!.sessionId !== state.sessionId)
           return res.status(403).json({ code: 'GOOGLE_SESSION_MISMATCH', message: 'A sessão que iniciou a conexão mudou.' })
@@ -95,12 +95,12 @@ export function completeGoogleLogin(createSession: (userId: string, req: AuthReq
             if (legacy.status !== 'security_review_required' || legacy.googleSubject || !link)
               return res.status(409).json({ code: 'GOOGLE_IDENTITY_CONFLICT', message: 'Esta conta exige recuperação ou vínculo pela sessão original.' })
             const recovered = await prisma.user.updateMany({ where: { id: legacy.id, status: 'security_review_required', googleSubject: null }, data: {
-              googleSubject: profile.sub, emailVerifiedAt: new Date(), status: 'active', passwordHash: await hashPassword(randomToken()),
+              googleSubject: profile.sub, emailVerifiedAt: new Date(), status: 'active', passwordHash: 'disabled:google',
             } })
             if (recovered.count !== 1) return res.status(409).json({ code: 'GOOGLE_IDENTITY_CONFLICT', message: 'Tente entrar novamente.' })
             user = await prisma.user.findUniqueOrThrow({ where: { id: legacy.id } })
           } else {
-            user = await prisma.user.create({ data: { email, name: profile.name || email, googleSubject: profile.sub, emailVerifiedAt: new Date(), passwordHash: await hashPassword(randomToken()) } })
+            user = await registerGoogleProfile({ email, name: profile.name || email, googleSubject: profile.sub })
           }
         }
       } else {
@@ -125,12 +125,13 @@ export function completeGoogleLogin(createSession: (userId: string, req: AuthReq
         accessTokenEncrypted: encryptText(tokens.access_token), refreshTokenEncrypted: encryptText(tokens.refresh_token),
         tokenExpiresAt: new Date(tokens.expiry_date ?? Date.now() + 3600_000), scopes: googleScopes, status: 'connected' }
       const account = await prisma.$transaction(async tx => {
+        await reserveStorageAccount(tx, user.id, 'google_drive', profile.sub)
         if (email === user.email.toLowerCase()) {
           await tx.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date(), ...(user.googleSubject ? {} : { googleSubject: profile.sub }) } })
         }
         return tx.connectedAccount.upsert({ where: { userId_provider_providerAccountId: { userId: user.id, provider: 'google_drive', providerAccountId: profile.sub } },
           create: { ...data, userId: user.id, provider: 'google_drive', providerAccountId: profile.sub }, update: data })
-      })
+      }, { isolationLevel: 'ReadCommitted' })
       await syncGoogleQuota(account.id).catch(() => undefined)
       return res.json({ status: 'connected' })
     } catch (error) { return next(error) }

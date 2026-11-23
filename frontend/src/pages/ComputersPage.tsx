@@ -122,14 +122,14 @@ export function ComputersPage() {
   }
 
   return <>
-    <PageHeader title="Computadores" description="Até 5 computadores por conta. Revogue vínculos antigos para liberar espaço." actions={
+    <PageHeader title="Computadores" description="Até 10 computadores por conta. Revogue vínculos antigos para liberar espaço." actions={
       <Button variant="outline" onClick={() => void load().catch(error => setMessage(error.message))}><RefreshCw className="h-4 w-4" />Atualizar</Button>
     } />
     <Card className="mt-6 p-5 sm:p-6">
       <div className="flex items-start gap-4">
         <div className="rounded-2xl bg-blue-50 p-3 text-blue-600"><Monitor className="h-6 w-6" /></div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-extrabold text-slate-950">Vincular este computador ({devices.filter(device => !device.revoked).length}/5)</h2>
+          <h2 className="text-lg font-extrabold text-slate-950">Vincular este computador ({devices.filter(device => !device.revoked).length}/10)</h2>
           <p className="mt-2 text-sm text-slate-600">Abra o SingleDrive Desktop no Windows, entre com a mesma conta usada aqui. No aplicativo, clique em Criar disco remoto para adicionar a unidade ao Explorador. Aqui você pode gerenciar o acesso e os arquivos.</p>
           <a href="singledrive-desktop://backup" className="mt-4 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-700">Abrir agente do SingleDrive</a>
           <p className="mt-3 text-xs text-slate-500">Para recuperar pastas após formatar, use Restaurar backup no agente Windows. O aplicativo precisa ter sido aberto pelo menos uma vez neste PC. O Windows pedirá autorização para abri-lo.</p>

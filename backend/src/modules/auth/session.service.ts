@@ -3,6 +3,8 @@ import { env } from '../../config/env.js'
 import { prisma } from '../../config/prisma.js'
 import { hashToken, randomToken } from '../../utils/crypto.js'
 import { signAccessToken } from '../../utils/jwt.js'
+import { clientIp } from '../../middleware/request-limits.js'
+import { AccountCapacityError } from './account-capacity.js'
 
 const secure = new URL(env.FRONTEND_URL).protocol === 'https:'
 const cookieName = secure ? '__Host-sd_refresh' : 'sd_refresh_dev'
@@ -19,8 +21,14 @@ export function readRefreshCookie(req: Request) {
 }
 export async function createSession(userId: string, req: Request, client: 'web' | 'android' | 'desktop' = 'web') {
   const refreshToken = randomToken()
-  const session = await prisma.userSession.create({ data: { userId, client, refreshTokenHash: hashToken(refreshToken),
-    userAgent: req.header('User-Agent')?.slice(0, 1024), ipAddress: req.ip,
-    expiresAt: new Date(Date.now() + env.REFRESH_TOKEN_TTL_DAYS * 86400_000) } })
+  const session = await prisma.$transaction(async tx => {
+    await tx.user.update({ where: { id: userId }, data: { updatedAt: new Date() }, select: { id: true } })
+    if (await tx.userSession.count({ where: { userId, revokedAt: null, expiresAt: { gt: new Date() } } }) >= 100) {
+      throw new AccountCapacityError('SESSION_LIMIT_REACHED', 'Há 100 sessões ativas neste perfil. Encerre uma sessão em outro dispositivo para continuar.')
+    }
+    return tx.userSession.create({ data: { userId, client, refreshTokenHash: hashToken(refreshToken),
+      userAgent: req.header('User-Agent')?.slice(0, 1024), ipAddress: clientIp(req),
+      expiresAt: new Date(Date.now() + env.REFRESH_TOKEN_TTL_DAYS * 86400_000) } })
+  }, { isolationLevel: 'ReadCommitted' })
   return { accessToken: signAccessToken({ sub: userId, sid: session.id }), refreshToken }
 }

@@ -31,13 +31,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 private val Green = Color(0xFF087F73)
@@ -150,9 +146,6 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun LoginScreen(vm: DriveModel, google: () -> Unit) {
-    var email by rememberSaveable { mutableStateOf("") }
-    // Password intentionally does not enter saved instance state.
-    var password by remember { mutableStateOf("") }; var reveal by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Brand()
         Surface(color = if (isSystemInDarkTheme()) Color(0xFF20382B) else Color(0xFFE7EEE3), shape = RoundedCornerShape(24.dp)) {
@@ -164,14 +157,6 @@ class MainActivity : ComponentActivity() {
         }
         Text("Bem-vindo de volta", fontWeight = FontWeight.SemiBold, fontSize = 25.sp, modifier = Modifier.padding(top = 8.dp))
         Text("Entre no seu espaço SingleDrive.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth(), label = { Text("E-mail") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), shape = RoundedCornerShape(12.dp))
-        OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Senha") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp),
-            visualTransformation = if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = { IconButton(onClick = { reveal = !reveal }) { Icon(if (reveal) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, "Mostrar ou ocultar senha") } })
-        Button(onClick = { vm.login(email, password); password = "" }, enabled = !vm.working && email.isNotBlank() && password.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(12.dp)) { Text(if (vm.working) "Aguarde…" else "Entrar") }
         OutlinedButton(onClick = google, enabled = !vm.working, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(12.dp)) {
             Icon(Icons.Outlined.AccountCircle, null); Spacer(Modifier.width(10.dp)); Text("Continuar com Google")
         }

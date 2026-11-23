@@ -20,7 +20,7 @@ test('vínculos de PC respeitam conta, tipo de sessão e revogação', async t =
     ['pc-a', { id: 'pc-a', userId: 'a', client: 'desktop' }],
     ['web-a', { id: 'web-a', userId: 'a', client: 'web' }],
     ['pc-b', { id: 'pc-b', userId: 'b', client: 'desktop' }],
-  ].map(([id, value]) => [id, { ...value, user: { status: 'active' }, revokedAt: null, expiresAt: new Date(Date.now() + 3600000) }]))
+  ].map(([id, value]) => [id, { ...value, user: { status: 'active', googleSubject: value.userId }, revokedAt: null, expiresAt: new Date(Date.now() + 3600000) }]))
   const devices = []
   const roots = []
   const entries = []
@@ -141,18 +141,18 @@ test('vínculos de PC respeitam conta, tipo de sessão e revogação', async t =
       assert.equal(remaining.data.devices[0].online, false)
       assert.equal((await request('web-a', '/backups/' + backupId + '/entries')).data.entries.length, 3)
     })
-    await t.test('aceita cinco PCs, bloqueia o sexto e libera vaga após revogação', async () => {
-      for (let i = 0; i < 6; i++) sessions.set('extra-' + i, { id: 'extra-' + i, userId: 'a', client: 'desktop', user: { status: 'active' }, revokedAt: null, expiresAt: new Date(Date.now() + 3600000) })
+    await t.test('aceita dez PCs, bloqueia o décimo primeiro e libera vaga após revogação', async () => {
+      for (let i = 0; i < 11; i++) sessions.set('extra-' + i, { id: 'extra-' + i, userId: 'a', client: 'desktop', user: { status: 'active', googleSubject: 'a' }, revokedAt: null, expiresAt: new Date(Date.now() + 3600000) })
       const linked = []
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 10; i++) {
         const result = await request('extra-' + i, '/register', 'POST', registration)
         assert.equal(result.status, 200); linked.push(result.data.device.id)
       }
       assert.equal((await request('extra-0', '/register', 'POST', registration)).status, 200)
-      const rejected = await request('extra-5', '/register', 'POST', registration)
+      const rejected = await request('extra-10', '/register', 'POST', registration)
       assert.equal(rejected.status, 409); assert.equal(rejected.data.code, 'DEVICE_LIMIT_REACHED')
       await request('web-a', '/' + linked[0], 'DELETE')
-      assert.equal((await request('extra-5', '/register', 'POST', registration)).status, 200)
+      assert.equal((await request('extra-10', '/register', 'POST', registration)).status, 200)
     })
   } finally {
     await new Promise(resolve => server.close(resolve))

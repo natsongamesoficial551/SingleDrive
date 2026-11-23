@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { env } from '../../config/env.js'
 import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
+import { diskLimit } from '../../middleware/request-limits.js'
 import { getAuthedGoogleClient } from '../google/google.service.js'
 import { googleQuotaMaxAgeMs, refreshAccountQuota } from '../storage/quota-refresh.js'
 import { DavError, ensureRoot, folderMime, nameKey, RemoteDiskTree, rootName, windowsName,
@@ -274,10 +275,13 @@ remoteDiskDavRouter.use(async (req, res: Response) => {
     if (!key) throw new DavError(401, 'Credencial do disco remoto necessária.')
     const device = await prisma.desktopDevice.findUnique({
       where: { remoteDiskKeyHash: keyHash(key) },
-      include: { session: true, user: { select: { status: true } } },
+      include: { session: true, user: { select: { status: true, googleSubject: true } } },
     })
     if (!device || device.revokedAt || device.session.revokedAt || device.session.expiresAt <= new Date()
-      || device.session.client !== 'desktop' || device.user.status !== 'active') throw new DavError(401, 'Vínculo do disco expirado.')
+      || device.session.client !== 'desktop' || device.user.status !== 'active' || !device.user.googleSubject) throw new DavError(401, 'Vínculo do disco expirado.')
+    let admitted = false
+    await diskLimit(Object.assign(req, { diskDeviceId: device.id }), res, error => { if (error) throw error; admitted = true })
+    if (!admitted) return
     if (!device.remoteDiskEnabled || !device.remoteDiskRootId || !device.remoteDiskAccountId) throw new DavError(403, 'O disco foi pausado no SingleDrive.')
     if (req.method === 'OPTIONS') { res.set('DAV', '1'); return res.status(204).end() }
     if (!methods.split(', ').includes(req.method)) throw new DavError(405, 'Operação não suportada.')

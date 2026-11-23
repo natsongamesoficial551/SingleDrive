@@ -29,7 +29,7 @@ Na produção, publique a API com as migrações `20261123000000_remote_disk` e 
 
 ## Vínculo e organização
 
-- Até cinco vínculos ativos por conta. Sessões revogadas/expiradas liberam vagas. Após formatar, revogue o PC antigo no site; o catálogo permanece na conta.
+- Até dez vínculos ativos por conta. Sessões revogadas/expiradas liberam vagas. Após formatar, revogue o PC antigo no site; o catálogo permanece na conta.
 - Estrutura no Drive e no site: `9drive/Backups de PCs/Computador - identificador/Pasta - identificador/subpastas`. Identificadores curtos distinguem origens homônimas.
 - Upload envia o folderId correto. A árvore usa uma conta Google; falta de espaço causa falha e nova tentativa, sem troca silenciosa de conta.
 - Varredura inicial e a cada dois minutos. Arquivos alterados nos últimos cinco segundos aguardam. Pastas vazias e arquivos vazios também ficam no catálogo; pastas são criadas no Drive, arquivos vazios são recriados na restauração.

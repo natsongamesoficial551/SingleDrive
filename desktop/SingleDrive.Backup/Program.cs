@@ -549,7 +549,7 @@ internal sealed class BackupForm : Form
     private async Task RegisterDeviceAsync()
     {
         using var result = await AgentRequestAsync("desktop-devices/register", HttpMethod.Post,
-            new { name = Environment.MachineName, platform = "windows", appVersion = "0.5.0" });
+            new { name = Environment.MachineName, platform = "windows", appVersion = "0.6.0" });
         deviceId = result.RootElement.GetProperty("device").GetProperty("id").GetString();
     }
 

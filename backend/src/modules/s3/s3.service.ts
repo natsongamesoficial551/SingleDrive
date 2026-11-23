@@ -38,7 +38,8 @@ export async function getS3ConfigForAccount(accountId: string, userId?: string) 
 
 export async function testS3Connection(config: S3Config) {
   const client = createS3Client(config)
-  await client.send(new HeadBucketCommand({ Bucket: config.bucket }))
+  try { await client.send(new HeadBucketCommand({ Bucket: config.bucket }), { abortSignal: AbortSignal.timeout(6000) }) }
+  finally { client.destroy() }
 }
 
 function safeFileName(name: string) {

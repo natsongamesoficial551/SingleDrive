@@ -32,9 +32,9 @@ test('native handlers keep PKCE, single-use state and initiating session checks'
   let claims = 0
   prisma.oauthState.findUnique = async () => ({ ...state })
   prisma.oauthState.updateMany = async () => { claims++; return { count: 0 } }
-  prisma.userSession.findUnique = async ({ where }) => ({ userId: 'owner', user: { status: 'active' }, revokedAt: null, expiresAt: new Date(Date.now() + 60000), id: where.id })
+  prisma.userSession.findUnique = async ({ where }) => ({ userId: 'owner', user: { status: 'active', googleSubject: 'owner' }, revokedAt: null, expiresAt: new Date(Date.now() + 60000), id: where.id })
   function response() {
-    return { statusCode: 200, headers: {}, setHeader(k, v) { this.headers[k] = v },
+    return { statusCode: 200, headers: {}, setHeader(k, v) { this.headers[k] = v }, append(k, v) { this.headers[k] = v; return this },
       status(code) { this.statusCode = code; return this }, json(data) { this.data = data; return this }, redirect(url) { this.location = url; return this } }
   }
   const handler = completeGoogleLogin(async () => { throw new Error('Unexpected session creation') })

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
 import { hashToken, randomToken } from '../../utils/crypto.js'
+import { AccountCapacityError } from '../auth/account-capacity.js'
 
 export const apiKeyRouter = Router()
 apiKeyRouter.use(requireAuth)
@@ -37,16 +38,23 @@ apiKeyRouter.post('/', async (req: AuthRequest, res, next) => {
   try {
     const body = createSchema.parse(req.body)
     const secret = `9d_live_${randomToken(32)}`
-    const apiKey = await prisma.apiKey.create({
+    const userId = req.user!.id
+    const apiKey = await prisma.$transaction(async tx => {
+      await tx.user.update({ where: { id: userId }, data: { updatedAt: new Date() }, select: { id: true } })
+      const active = await tx.apiKey.count({ where: { userId, status: 'active', revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] } })
+      if (active >= 100) throw new AccountCapacityError('API_KEY_LIMIT_REACHED', 'Cada perfil pode manter até 100 chaves ativas.')
+      return tx.apiKey.create({
       data: {
-        userId: req.user!.id,
+        userId,
         name: body.name,
         keyPrefix: secret.slice(0, 16),
         keyHash: hashToken(secret),
         scopes,
         expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
       },
-    })
+      })
+    }, { isolationLevel: 'ReadCommitted' })
     return res.status(201).json({ apiKey: serializeApiKey(apiKey), secret })
   } catch (error) {
     return next(error)

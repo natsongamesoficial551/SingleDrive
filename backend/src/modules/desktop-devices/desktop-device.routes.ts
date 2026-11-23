@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { DesktopDevice } from '@prisma/client'
 import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
+import { maxDesktopDevices } from '../auth/account-capacity.js'
 
 export const desktopDeviceRouter = Router()
 desktopDeviceRouter.use(requireAuth)
@@ -44,14 +45,14 @@ desktopDeviceRouter.post('/register', async (req: AuthRequest, res, next) => {
       const existing = await tx.desktopDevice.findUnique({ where: { sessionId: session.id } })
       if (existing?.revokedAt) return null
       if (!existing && await tx.desktopDevice.count({ where: { userId: req.user!.id, revokedAt: null,
-        session: { revokedAt: null, expiresAt: { gt: new Date() } } } }) >= 5) return null
+        session: { revokedAt: null, expiresAt: { gt: new Date() } } } }) >= maxDesktopDevices) return null
       return tx.desktopDevice.upsert({
         where: { sessionId: session.id },
         create: { ...body, userId: req.user!.id, sessionId: session.id, sourceNames: [] },
         update: { ...body, lastSeenAt: new Date() },
       })
     }, { isolationLevel: 'ReadCommitted' })
-    if (!device) return res.status(409).json({ code: 'DEVICE_LIMIT_REACHED', message: 'Sua conta permite at� 5 computadores. Revogue um v�nculo antigo na p�gina Computadores e tente novamente.' })
+    if (!device) return res.status(409).json({ code: 'DEVICE_LIMIT_REACHED', message: `Sua conta permite até ${maxDesktopDevices} computadores. Revogue um vínculo antigo em Computadores e tente novamente.` })
     return res.json({ device: serialize(device, session) })
   } catch (error) { return next(error) }
 })

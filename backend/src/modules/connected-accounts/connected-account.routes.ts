@@ -1,11 +1,10 @@
 import { Router } from 'express'
 import { google } from 'googleapis'
 import { z } from 'zod'
-import { env } from '../../config/env.js'
 import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
-import { decryptText, encryptText, hashToken, randomToken } from '../../utils/crypto.js'
-import { hashPassword } from '../../utils/password.js'
+import { decryptText, encryptText, randomToken } from '../../utils/crypto.js'
+import { reserveStorageAccount } from '../auth/account-capacity.js'
 import { createOAuthClient, getAuthedGoogleClient } from '../google/google.service.js'
 import { syncS3Quota, testS3Connection } from '../s3/s3.service.js'
 
@@ -65,9 +64,11 @@ connectedAccountRouter.post('/s3', requireAuth, async (req: AuthRequest, res, ne
     if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(body.region)) return res.status(400).json({ code: 'S3_REGION_INVALID', message: 'Invalid S3 region.' })
     const providerConfig = await prisma.providerConfig.findFirstOrThrow({ where: { userId: null, provider: 'google_drive', status: 'active' }, orderBy: { createdAt: 'desc' } })
     const providerAccountId = `${body.bucket}:${body.endpoint || body.region}`
-    const existingAccount = await prisma.connectedAccount.findUnique({ where: { userId_provider_providerAccountId: { userId: req.user!.id, provider: 's3', providerAccountId } } })
-    const account = existingAccount
-      ? await prisma.connectedAccount.update({
+    const userId = req.user!.id
+    const account = await prisma.$transaction(async tx => {
+      const existingAccount = await reserveStorageAccount(tx, userId, 's3', providerAccountId)
+      const saved = existingAccount
+      ? await tx.connectedAccount.update({
         where: { id: existingAccount.id },
         data: {
           providerConfigId: providerConfig.id,
@@ -80,8 +81,8 @@ connectedAccountRouter.post('/s3', requireAuth, async (req: AuthRequest, res, ne
           status: 'connected',
         },
       })
-      : await prisma.connectedAccount.create({ data: {
-        userId: req.user!.id,
+      : await tx.connectedAccount.create({ data: {
+        userId,
         providerConfigId: providerConfig.id,
         provider: 's3',
         providerAccountId,
@@ -93,11 +94,11 @@ connectedAccountRouter.post('/s3', requireAuth, async (req: AuthRequest, res, ne
         scopes: [],
         status: 'connected',
       } })
-    const config = await prisma.s3StorageConfig.upsert({
-      where: { connectedAccountId: account.id },
+    const config = await tx.s3StorageConfig.upsert({
+      where: { connectedAccountId: saved.id },
       create: {
-        userId: req.user!.id,
-        connectedAccountId: account.id,
+        userId,
+        connectedAccountId: saved.id,
         name: body.name,
         bucket: body.bucket,
         region: body.region,
@@ -119,19 +120,16 @@ connectedAccountRouter.post('/s3', requireAuth, async (req: AuthRequest, res, ne
         status: 'active',
       },
     })
-    try {
       await testS3Connection(config)
-      const quota = await syncS3Quota(account.id)
-      return res.status(201).json({
-        account: {
-          id: account.id, provider: account.provider, email: account.email, displayName: account.displayName, status: account.status,
-          storageAccount: { ...quota, totalBytes: quota.totalBytes?.toString() ?? null, usedBytes: quota.usedBytes.toString(), availableBytes: quota.availableBytes?.toString() ?? null, trashBytes: quota.trashBytes?.toString() ?? null },
-        },
-      })
-    } catch (error) {
-      if (!existingAccount) await prisma.connectedAccount.delete({ where: { id: account.id } }).catch(() => undefined)
-      throw error
-    }
+      return saved
+    }, { isolationLevel: 'ReadCommitted', timeout: 10_000 })
+    const quota = await syncS3Quota(account.id).catch(() => null)
+    return res.status(201).json({
+      account: {
+        id: account.id, provider: account.provider, email: account.email, displayName: account.displayName, status: account.status,
+        storageAccount: quota ? { ...quota, totalBytes: quota.totalBytes?.toString() ?? null, usedBytes: quota.usedBytes.toString(), availableBytes: quota.availableBytes?.toString() ?? null, trashBytes: quota.trashBytes?.toString() ?? null } : null,
+      },
+    })
   } catch (error) {
     return next(error)
   }

@@ -12,7 +12,7 @@ Use o SDK .NET 8, WiX CLI 6.0.2 e a extensão `WixToolset.UI.wixext/6.0.2`. Exec
 
 ```powershell
 wix extension add WixToolset.UI.wixext/6.0.2
-.\desktop\installer\Build-Msi.ps1 -RcloneFolder .\rclone -WinFspFolder .\winfsp -WorkDirectory .\work -OutputMsi .\outputs\SingleDrive-0.5.0-x64.msi
+.\desktop\installer\Build-Msi.ps1 -RcloneFolder .\rclone -WinFspFolder .\winfsp -WorkDirectory .\work -OutputMsi .\outputs\SingleDrive-Windows-x64.msi
 ```
 
 Após instalar, abra o SingleDrive pelo menu Iniciar, entre com Google e clique em **Criar disco remoto**. O Windows pode pedir permissão de administrador para instalar o WinFsp. A desinstalação do SingleDrive preserva o driver compartilhado e os arquivos do Google Drive.

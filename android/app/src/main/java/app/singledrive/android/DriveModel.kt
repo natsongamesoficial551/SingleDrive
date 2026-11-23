@@ -81,9 +81,6 @@ class DriveModel(app: Application) : AndroidViewModel(app) {
             finally { working = false }
         }
     }
-    fun login(email: String, password: String) = action {
-        user = api.accept(api.call("auth/login", "POST", json("email" to email.trim(), "password" to password), false)); refresh()
-    }
     fun restoreLogin() = action { user = api.restore(); refresh() }
     fun google(connect: Boolean, full: Boolean, open: (Uri) -> Unit) = action {
         val flags = Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP

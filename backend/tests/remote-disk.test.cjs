@@ -36,7 +36,7 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
     id: randomUUID(), remoteDiskEnabled: true, remoteDiskKeyHash: hash(key), remoteDiskAccountId: randomUUID(),
     remoteDiskRootId: root.id, userId: 'owner', sessionId: 'pc', revokedAt: null,
     session: { client: 'desktop', revokedAt: null, expiresAt: new Date(Date.now() + 60_000) },
-    user: { status: 'active' },
+    user: { status: 'active', googleSubject: 'owner' },
   }
   const accountId = device.remoteDiskAccountId
   const secondId = randomUUID()
