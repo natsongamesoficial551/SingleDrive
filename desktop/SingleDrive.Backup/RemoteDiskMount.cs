@@ -8,7 +8,7 @@ namespace SingleDrive.Backup;
 internal sealed class RemoteDiskMount : IDisposable
 {
     // O envio segue direto ao backend para evitar o limite de corpo do proxy Pages.
-    private const string DavUrl = "https://singledrive.onrender.com/remote-disk/dav/";
+    private const string DavUrl = "https://singledrive-api.onrender.com/remote-disk/dav/";
     private const string WinFspInstallerHash = "36CE01F9EEDBBE6842B7FB4BEDC79D7D4F71983E8ACEB6877B46A07B331C7E19";
     private readonly Process process;
     public string DriveLetter { get; }

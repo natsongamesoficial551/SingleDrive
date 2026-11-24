@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)] [string] $WinFspFolder,
     [Parameter(Mandatory)] [string] $WorkDirectory,
     [Parameter(Mandatory)] [string] $OutputMsi,
-    [string] $Version = '0.6.3',
+    [string] $Version = '0.6.4',
     [string] $Dotnet = 'dotnet',
     [string] $Wix = 'wix'
 )
