@@ -1,8 +1,13 @@
 name: Manter API ativa
 
 on:
-  # Somente diagnóstico manual. O ping periódico roda no Netlify.
+  schedule:
+    # Intervalos de 6 a 7 minutos, inclusive na virada da hora.
+    - cron: '2,9,16,23,30,37,44,50,56 * * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/keep-api-warm.yml']
 
 # O ping não precisa ler o repositório nem acessar credenciais.
 permissions: {}
