@@ -36,7 +36,8 @@ jobs:
             return $products[0].PSChildName
           }
           foreach ($version in @('0.6.2', '0.6.4')) {
-            curl.exe -fLsS --retry 3 "https://github.com/natsongamesoficial551/SingleDrive/releases/download/v$version/SingleDrive-$version-x64.msi" -o "$work/$version.msi"
+            $asset = if ($version -eq '0.6.2') { 'SingleDrive-Windows-x64.msi' } else { "SingleDrive-$version-x64.msi" }
+            curl.exe -fLsS --retry 3 "https://github.com/natsongamesoficial551/SingleDrive/releases/download/v$version/$asset" -o "$work/$version.msi"
             if ($LASTEXITCODE -ne 0) { throw "Release $version could not be downloaded" }
           }
           Invoke-Msi "/a `"$work/0.6.4.msi`" TARGETDIR=`"$work/extract`"" 'extract'
