@@ -1,0 +1,70 @@
+name: Verificar atualização do MSI
+on:
+  push:
+    branches: [codex/verify-msi-065]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Montar e testar o MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $work = Join-Path $env:RUNNER_TEMP 'SingleDrive-MSI'
+          New-Item -ItemType Directory -Path $work | Out-Null
+          function Invoke-Msi([string]$argsLine, [string]$logName, [int[]]$expected = @(0)) {
+            $log = Join-Path $work "$logName.log"
+            $result = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "$argsLine /qn /norestart /l*v `"$log`""
+            if ($result.ExitCode -notin $expected) {
+              Get-Content $log -Tail 90
+              throw "${logName}: exit code $($result.ExitCode)"
+            }
+            Write-Output "${logName}: exit code $($result.ExitCode)"
+          }
+          function Assert-Installed([string]$version) {
+            $products = @(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object DisplayName -eq 'SingleDrive')
+            if ($products.Count -ne 1 -or $products[0].DisplayVersion -ne $version) { throw "Expected exactly one SingleDrive $version" }
+            $exe = Get-Item "$env:ProgramFiles/SingleDrive/SingleDrive.Desktop.exe"
+            if ($exe.VersionInfo.ProductVersion -notlike "$version*") { throw 'Wrong executable version' }
+            return $products[0].PSChildName
+          }
+          foreach ($version in @('0.6.2', '0.6.4')) {
+            curl.exe -fLsS --retry 3 "https://github.com/natsongamesoficial551/SingleDrive/releases/download/v$version/SingleDrive-$version-x64.msi" -o "$work/$version.msi"
+            if ($LASTEXITCODE -ne 0) { throw "Release $version could not be downloaded" }
+          }
+          Invoke-Msi "/a `"$work/0.6.4.msi`" TARGETDIR=`"$work/extract`"" 'extract'
+          $payload = (Get-ChildItem "$work/extract" -Recurse -Filter rclone.exe).Directory.FullName
+          dotnet tool install wix --version 6.0.2 --tool-path "$work/tools"
+          if ($LASTEXITCODE -ne 0) { throw 'WiX installation failed' }
+          $wix = Join-Path $work 'tools/wix.exe'
+          & $wix extension add WixToolset.UI.wixext/6.0.2
+          if ($LASTEXITCODE -ne 0) { throw 'WiX extension installation failed' }
+          ./desktop/installer/Build-Msi.ps1 -RcloneFolder $payload -WinFspFolder $payload -WorkDirectory "$work/build" -OutputMsi "$work/0.6.5.msi" -Wix $wix
+          Invoke-Msi "/i `"$work/0.6.5.msi`"" 'fresh-065'
+          $product = Assert-Installed '0.6.5'
+          Invoke-Msi "/x $product" 'remove-065'
+          foreach ($version in @('0.6.2', '0.6.4')) {
+            Invoke-Msi "/i `"$work/$version.msi`"" "install-$version"
+            $olderProduct = Assert-Installed $version
+            $settingsDir = New-Item -ItemType Directory -Force "$env:LOCALAPPDATA/SingleDrive"
+            $sentinel = Join-Path $settingsDir 'upgrade-test.txt'
+            Set-Content $sentinel 'preserve me'
+            Invoke-Msi "/i `"$work/0.6.5.msi`"" "upgrade-$version"
+            $product = Assert-Installed '0.6.5'
+            if ($product -eq $olderProduct -or (Get-Content $sentinel) -ne 'preserve me') { throw 'Upgrade did not preserve user data or change the product registration' }
+            Invoke-Msi "/i `"$work/$version.msi`"" "reject-downgrade-$version" @(1603)
+            $null = Assert-Installed '0.6.5'
+            Invoke-Msi "/x $product" "remove-upgraded-$version"
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: msi-verification
+          path: ${{ runner.temp }}/SingleDrive-MSI/*.log

@@ -4,7 +4,8 @@
   <Package Name="SingleDrive" Manufacturer="SingleDrive" Version="$(var.ProductVersion)"
            UpgradeCode="3915B179-68F8-4DA4-AA1E-F8F08DB2E8F0" Scope="perMachine"
            InstallerVersion="500" Language="1046">
-    <MajorUpgrade DowngradeErrorMessage="Uma versão mais recente do SingleDrive já está instalada." />
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="Uma versão mais recente do SingleDrive já está instalada." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="mszip" />
     <Property Id="ARPHELPLINK" Value="https://singledrive.pages.dev/" />
 
