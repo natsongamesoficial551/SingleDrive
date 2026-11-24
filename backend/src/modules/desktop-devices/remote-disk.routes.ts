@@ -11,14 +11,18 @@ import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.
 import { diskLimit } from '../../middleware/request-limits.js'
 import { getAuthedGoogleClient } from '../google/google.service.js'
 import { googleQuotaMaxAgeMs, refreshAccountQuota } from '../storage/quota-refresh.js'
-import { DavError, ensureRoot, folderMime, nameKey, RemoteDiskTree, rootName, windowsName,
-  type DiskCopy, type DiskFile, type Drive } from './remote-disk-tree.js'
+import { DavError, ensureRoot, findRoot, folderMime, nameKey, RemoteDiskTree, rootName, windowsName,
+  type DiskCopy, type DiskFile } from './remote-disk-tree.js'
+import { previousDisk } from './disk-recovery.js'
+import { maxDriveFileBytes, saveDriveStream, sendDrivePart, startDriveUpload } from './drive-stream-upload.js'
+import { openPublicDownload, publicDownloadUrl } from './public-download.js'
 
 export const remoteDiskSettingsRouter = Router()
 export const remoteDiskDavRouter = Router()
 remoteDiskSettingsRouter.use(requireAuth)
 
 const davPrefix = '/remote-disk/dav'
+const remoteFileLimit = Math.min(env.MAX_REMOTE_DISK_FILE_BYTES, maxDriveFileBytes)
 const methods = 'OPTIONS, PROPFIND, GET, HEAD, PUT, MKCOL, COPY, MOVE, DELETE'
 const activeSession = () => ({ revokedAt: null, expiresAt: { gt: new Date() } })
 const keyHash = (key: string) => createHash('sha256').update(key).digest('hex')
@@ -61,8 +65,14 @@ remoteDiskSettingsRouter.put('/devices/:id', async (req: AuthRequest, res, next)
       if (device.remoteDiskAccountId && accountId && accountId !== device.remoteDiskAccountId) {
         throw new DavError(409, 'O disco já tem uma conta Google vinculada. Use a conta original para preservar a fila de arquivos do PC.')
       }
-      const pooled = poolEnabled ?? device.remoteDiskPoolEnabled
-      const selected = device.remoteDiskAccountId ?? accountId ?? (pooled ? (await tx.connectedAccount.findFirst({
+      const previous = !device.remoteDiskRootId && !accountId ? await previousDisk(tx, device) : null
+      const pooled = previous?.remoteDiskPoolEnabled ?? poolEnabled ?? device.remoteDiskPoolEnabled
+      const previousAccount = previous?.remoteDiskAccountId
+      const original = previousAccount && await tx.connectedAccount.findFirst({ where: diskAccount(previousAccount, userId) })
+      if (previousAccount && !original && !pooled) {
+        throw new DavError(409, 'Reconecte a conta Google Drive original para recuperar as pastas do disco.')
+      }
+      const selected = device.remoteDiskAccountId ?? accountId ?? (original || undefined)?.id ?? (pooled ? (await tx.connectedAccount.findFirst({
         where: diskAccounts(userId), orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true },
       }))?.id : undefined)
       if (!selected) throw new DavError(400, 'Selecione a conta Google Drive que vai guardar os arquivos.')
@@ -72,10 +82,22 @@ remoteDiskSettingsRouter.put('/devices/:id', async (req: AuthRequest, res, next)
         await tx.desktopDevice.updateMany({ where, data: { remoteDiskEnabled: true, remoteDiskPoolEnabled: pooled } })
         return { status: 200 }
       }
-      const account = await tx.connectedAccount.findFirst({ where: diskAccount(selected, userId) })
+      let account = await tx.connectedAccount.findFirst({ where: diskAccount(selected, userId) })
       if (!account) throw new DavError(404, 'A conta Google Drive precisa estar conectada ao SingleDrive.')
-      const drive = google.drive({ version: 'v3', auth: await getAuthedGoogleClient(account) })
-      const rootId = await ensureRoot(drive, userId)
+      const createDrive = async (candidate: NonNullable<typeof account>) =>
+        google.drive({ version: 'v3', auth: await getAuthedGoogleClient(candidate) })
+      const drive = await createDrive(account)
+      let rootId = previous ? await findRoot(drive, userId) : await ensureRoot(drive, userId)
+      if (previous && pooled && !rootId) {
+        const candidates = await tx.connectedAccount.findMany({ where: { ...diskAccounts(userId), id: { not: account.id } },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })
+        const roots = await Promise.allSettled(candidates.map(async candidate => ({
+          account: candidate, root: await findRoot(await createDrive(candidate), userId),
+        })))
+        const existing = roots.find(result => result.status === 'fulfilled' && result.value.root)
+        if (existing?.status === 'fulfilled') ({ account, root: rootId } = existing.value)
+      }
+      if (!rootId) throw new DavError(409, 'A pasta do disco anterior está indisponível. Confira as contas conectadas e a lixeira do Google Drive.')
       const update = await tx.desktopDevice.updateMany({
         where, data: { remoteDiskEnabled: true, remoteDiskPoolEnabled: pooled, remoteDiskAccountId: account.id, remoteDiskRootId: rootId },
       })
@@ -172,7 +194,7 @@ async function getDiskQuota(account: { id: string; provider: string }) {
 // Evita que dois clientes desta instância criem simultaneamente o mesmo caminho.
 const mutations = new Map<string, Promise<void>>()
 const recentWrites = new Map<string, symbol>()
-async function mutate(rootId: string, action: () => Promise<unknown>) {
+async function mutate<T>(rootId: string, action: () => Promise<T>) {
   const previous = mutations.get(rootId)
   let release!: () => void
   const pending = new Promise<void>(resolve => { release = resolve })
@@ -185,7 +207,7 @@ function uploadSize(req: Request) {
   const length = req.get('content-length')
   if (length === undefined || !/^\d+$/.test(length)) throw new DavError(411, 'Informe o tamanho do arquivo.')
   const size = Number(length)
-  if (!Number.isSafeInteger(size) || size > env.MAX_UPLOAD_BYTES) throw new DavError(413, 'Arquivo acima do limite permitido.')
+  if (!Number.isSafeInteger(size) || size > remoteFileLimit) throw new DavError(413, 'Arquivo acima do limite permitido.')
   return size
 }
 
@@ -199,42 +221,6 @@ async function chooseUploadMount(tree: RemoteDiskTree, size: number) {
   const mount = eligible[0]?.mount ?? quotas.find(candidate => !candidate.quota)?.mount
   if (!mount) throw new DavError(507, 'Nenhuma conta do Google Drive tem espaço suficiente para este arquivo.')
   return mount
-}
-
-async function save(req: Request, drive: Drive, authHeaders: Headers, parent: DiskFile, name: string, size: number, item?: DiskFile) {
-  const length = size.toString()
-  if (item?.mimeType === folderMime) throw new DavError(409, 'Já existe uma pasta com este nome.')
-  const mimeType = 'application/octet-stream'
-  const metadata = item ? {} : { name, parents: [parent.id] }
-  if (!size) {
-    const media = { mimeType, body: Readable.from([]) }
-    if (item) await drive.files.update({ fileId: item.id, media, requestBody: metadata, fields: 'id' }, { retry: false })
-    else await drive.files.create({ media, requestBody: metadata, fields: 'id' }, { retry: false })
-    return
-  }
-  const signal = AbortSignal.any([AbortSignal.timeout(10 * 60_000), requestAborted(req)])
-  const uploadUrl = 'https://www.googleapis.com/upload/drive/v3/files' + (item ? '/' + encodeURIComponent(item.id) : '')
-  const init = await streamFetch(uploadUrl + '?uploadType=resumable&fields=id', {
-    method: item ? 'PATCH' : 'POST',
-    headers: {
-      ...Object.fromEntries(authHeaders), 'Content-Type': 'application/json',
-      'X-Upload-Content-Type': mimeType, 'X-Upload-Content-Length': length,
-    },
-    body: JSON.stringify(metadata), redirect: 'error', signal,
-  })
-  const location = init.headers.get('location')
-  await init.body?.cancel()
-  if (!init.ok || !location) throw new DavError(init.ok ? 502 : init.status, 'O Google Drive não iniciou o envio.')
-  const target = new URL(location)
-  if (target.origin !== 'https://www.googleapis.com' || !target.pathname.startsWith('/upload/drive/v3/files')) {
-    throw new DavError(502, 'Endereço de envio do Google inválido.')
-  }
-  const upload = await streamFetch(target, {
-    method: 'PUT', headers: { 'Content-Type': mimeType, 'Content-Length': length, 'Content-Range': 'bytes 0-' + (size - 1) + '/' + length },
-    body: req, duplex: 'half', redirect: 'error', signal,
-  })
-  await upload.body?.cancel()
-  if (!upload.ok) throw new DavError(upload.status === 308 ? 502 : upload.status, 'O Google Drive não confirmou o arquivo completo.')
 }
 
 async function setTrashed(copy: DiskCopy, trashed: boolean) {
@@ -267,6 +253,210 @@ function requestAborted(req: Request) {
   req.once('close', () => { if (!req.complete) controller.abort() })
   return controller.signal
 }
+
+type ImportProgress = {
+  id: string; deviceId: string; fileName: string; size: number | null; bytes: number
+  status: 'downloading' | 'completed' | 'failed'; message?: string
+}
+const imports = new Map<string, { progress: ImportProgress; controller: AbortController }>()
+const importNames = new Map<string, string>()
+const importRoute = '/devices/:id/import'
+const localUploadRoute = '/devices/:id/upload'
+const localParts = new Map<string, { id: string; deviceId: string; name: string; target: URL; size: number;
+  offset: number; done: boolean; busy: boolean; account: DiskCopy['mount']['account'] }>()
+let partRequests = 0
+
+async function writableDisk(userId: string, id: string) {
+  const device = await prisma.desktopDevice.findFirst({
+    where: { id, userId, revokedAt: null, session: activeSession(), remoteDiskEnabled: true },
+  })
+  if (!device?.remoteDiskRootId || !device.remoteDiskAccountId) throw new DavError(404, 'Ative o disco remoto para salvar arquivos.')
+  return { ...device, remoteDiskAccountId: device.remoteDiskAccountId, remoteDiskRootId: device.remoteDiskRootId }
+}
+
+async function newDiskFile(disk: Awaited<ReturnType<typeof writableDisk>>, name: string, size: number) {
+  const tree = await treeFor(disk)
+  const { ancestors, item } = await tree.locate(await tree.root(), [name])
+  if (item || importNames.get(disk.userId) === nameKey(name)) {
+    throw new DavError(409, 'Já existe um arquivo com esse nome ou um envio em andamento.')
+  }
+  const mount = await chooseUploadMount(tree, size)
+  return tree.ensureFolder(ancestors, mount)
+}
+
+remoteDiskSettingsRouter.post(localUploadRoute, async (req: AuthRequest, res, next) => {
+  try {
+    const id = z.string().uuid().parse(req.params.id)
+    const { name, size } = z.object({ name: z.string().max(255), size: z.number().int().min(0).max(remoteFileLimit) }).parse(req.body)
+    if (!windowsName(name)) throw new DavError(400, 'O nome do arquivo precisa ser válido no Windows.')
+    const userId = req.user!.id
+    const disk = await writableDisk(userId, id)
+    const result = await mutate(userId, async () => {
+      if (localParts.get(userId)?.busy) throw new DavError(409, 'Aguarde o envio atual.')
+      const parent = await newDiskFile(disk, name, size)
+      const { auth, drive } = await parent.mount.client()
+      const signal = AbortSignal.timeout(45_000)
+      if (!size) {
+        await saveDriveStream(Readable.from([]), drive, await auth.getRequestHeaders(), parent.file, name, 0, remoteFileLimit, signal)
+        return { status: 'completed' }
+      }
+      const target = await startDriveUpload(await auth.getRequestHeaders(), { name, parents: [parent.file.id] }, size, signal)
+      const job = { id: randomBytes(16).toString('hex'), deviceId: id, name, target, size, offset: 0, done: false, busy: false,
+        account: parent.mount.account }
+      localParts.set(userId, job)
+      setTimeout(() => { if (localParts.get(userId) === job) localParts.delete(userId) }, 24 * 60 * 60_000).unref()
+      return { status: 'uploading', id: job.id }
+    })
+    return res.status(201).json(result)
+  } catch (error) {
+    if (error instanceof DavError) return res.status(error.status).json({ message: error.message })
+    return next(error)
+  }
+})
+
+remoteDiskSettingsRouter.put(localUploadRoute + '/:jobId', async (req: AuthRequest, res) => {
+  const job = localParts.get(req.user!.id)
+  if (!job || job.id !== req.params.jobId || job.deviceId !== req.params.id) return res.status(404).json({ message: 'Envio expirado. Selecione o arquivo novamente.' })
+  if (job.busy) return res.status(409).json({ message: 'Aguarde a confirmação do trecho.' })
+  if (job.done) return res.json({ status: 'completed', offset: job.size })
+  const range = req.get('Content-Range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/)
+  if (!range || Number(range[3]) !== job.size) return res.status(400).json({ message: 'Trecho inválido.' })
+  const start = Number(range[1])
+  const end = Number(range[2]) + 1
+  const length = end - start
+  if (start !== job.offset) {
+    req.resume()
+    return res.json({ status: 'uploading', offset: job.offset })
+  }
+  const declaredLength = req.get('Content-Length')
+  if (!Number.isSafeInteger(end) || end > job.size || length < 1 || length > 32 * 1024 ** 2
+    || (declaredLength !== undefined && Number(declaredLength) !== length)
+    || (end !== job.size && length % (256 * 1024))) {
+    return res.status(400).json({ message: 'Tamanho do trecho inválido.' })
+  }
+  if (partRequests >= 4) return res.set('Retry-After', '5').status(429).json({ message: 'Aguarde uma vaga para enviar o trecho.' })
+  job.busy = true
+  partRequests++
+  try {
+    await writableDisk(req.user!.id, job.deviceId)
+    const part = Buffer.allocUnsafe(length)
+    let received = 0
+    for await (const data of req.iterator({ destroyOnReturn: false }) as AsyncIterable<Buffer>) {
+      if (received + data.length > length) throw new DavError(400, 'Tamanho do trecho inválido.')
+      data.copy(part, received)
+      received += data.length
+    }
+    if (received !== length) throw new DavError(400, 'O trecho chegou incompleto.')
+    const signal = AbortSignal.any([requestAborted(req), AbortSignal.timeout(120_000)])
+    const result = await sendDrivePart(job.target, part, start, end, job.size, signal)
+    if (result.status === 308) {
+      const position = result.headers.get('range')?.match(/^bytes=0-(\d+)$/)
+      const offset = position ? Number(position[1]) + 1 : 0
+      await result.body?.cancel()
+      if (offset <= start || offset > end || offset >= job.size) throw new DavError(502, 'O Google Drive ainda não confirmou o arquivo.')
+      job.offset = offset
+      return res.json({ status: 'uploading', offset })
+    }
+    if (!result.ok) {
+      await result.body?.cancel()
+      throw new DavError(result.status >= 500 ? 502 : 422, 'O Google Drive recusou o trecho.')
+    }
+    const file = await result.json() as { id?: string; size?: string }
+    if (end !== job.size || !file.id || file.size !== String(job.size)) throw new DavError(502, 'O Google Drive retornou um tamanho diferente do arquivo.')
+    job.done = true
+    job.offset = job.size
+    void refreshAccountQuota(job.account).catch(() => undefined)
+    return res.json({ status: 'completed', offset: job.size })
+  } catch (error) {
+    return res.status(error instanceof DavError ? error.status : 502).json({
+      message: error instanceof DavError ? error.message : 'Não foi possível enviar o trecho ao Google Drive.',
+    })
+  } finally { job.busy = false; partRequests-- }
+})
+
+remoteDiskSettingsRouter.get(importRoute, (req: AuthRequest, res) => {
+  const job = imports.get(req.user!.id)?.progress
+  return res.json({ job: job?.deviceId === req.params.id ? job : null })
+})
+
+remoteDiskSettingsRouter.delete(importRoute, (req: AuthRequest, res) => {
+  const job = imports.get(req.user!.id)
+  if (job && job.progress.deviceId === req.params.id && job.progress.status === 'downloading') job.controller.abort()
+  return res.json({ status: 'ok' })
+})
+
+remoteDiskSettingsRouter.post(importRoute, async (req: AuthRequest, res, next) => {
+  try {
+    const id = z.string().uuid().parse(req.params.id)
+    const { url, fileName } = z.object({
+      url: z.string().trim().max(4096), fileName: z.string().trim().max(255).optional(),
+    }).parse(req.body)
+    publicDownloadUrl(url)
+    if (fileName && !windowsName(fileName)) throw new DavError(400, 'Escolha um nome de arquivo válido no Windows.')
+    const userId = req.user!.id
+    const disk = await writableDisk(userId, id)
+    if (imports.get(userId)?.progress.status === 'downloading') throw new DavError(409, 'Já existe um download por link em andamento.')
+    if ([...imports.values()].filter(job => job.progress.status === 'downloading').length >= 4) {
+      throw new DavError(429, 'Os downloads por link estão ocupados. Aguarde e tente novamente.')
+    }
+
+    const progress: ImportProgress = { id: randomBytes(12).toString('hex'), deviceId: id, fileName: fileName || '',
+      size: null, bytes: 0, status: 'downloading' }
+    const controller = new AbortController()
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(24 * 60 * 60_000)])
+    const job = { progress, controller }
+    imports.set(userId, job)
+    res.status(202).json({ job: progress })
+    void (async () => {
+      let opened: Awaited<ReturnType<typeof openPublicDownload>> | undefined
+      try {
+        opened = await openPublicDownload(url, signal)
+        const { response } = opened
+        let fromUrl = new URL(response.url).pathname.split('/').at(-1) ?? ''
+        try { fromUrl = decodeURIComponent(fromUrl) } catch { /* use the encoded name */ }
+        const name = fileName || (windowsName(fromUrl) ? fromUrl : 'download')
+        if (/^text\/html\b/i.test(response.headers.get('content-type') ?? '')
+          && !/\.html?$/i.test(name) && !/^attachment\b/i.test(response.headers.get('content-disposition') ?? '')) {
+          throw new DavError(422, 'O link abriu uma página. Copie o endereço direto do arquivo.')
+        }
+        const length = response.headers.get('content-length')
+        const size = length === null ? undefined : Number(length)
+        if (size !== undefined && (!Number.isSafeInteger(size) || size < 0 || size > remoteFileLimit)) {
+          throw new DavError(413, 'Arquivo acima do limite permitido.')
+        }
+        progress.fileName = name
+        progress.size = size ?? null
+        const parent = await mutate(userId, async () => {
+          signal.throwIfAborted()
+          const activeLocal = localParts.get(userId)
+          if (activeLocal && !activeLocal.done && nameKey(activeLocal.name) === nameKey(name)) {
+            throw new DavError(409, 'Já existe um envio em andamento com esse nome.')
+          }
+          const parent = await newDiskFile(disk, name, size ?? 0)
+          importNames.set(userId, nameKey(name))
+          return parent
+        })
+        const mount = parent.mount
+        const { drive, auth } = await mount.client()
+        await saveDriveStream(Readable.fromWeb(response.body!), drive, await auth.getRequestHeaders(), parent.file,
+          name, size, remoteFileLimit, signal, undefined, sent => { progress.bytes = sent })
+        progress.status = 'completed'
+        void refreshAccountQuota(mount.account).catch(() => undefined)
+      } catch (error) {
+        progress.status = 'failed'
+        progress.message = controller.signal.aborted ? 'Download cancelado.' : error instanceof DavError ? error.message
+          : 'Não foi possível concluir o download. Confira se o link ainda funciona e tente novamente.'
+      } finally {
+        importNames.delete(userId)
+        await opened?.close().catch(() => undefined)
+        setTimeout(() => { if (imports.get(userId) === job) imports.delete(userId) }, 15 * 60_000).unref()
+      }
+    })()
+  } catch (error) {
+    if (error instanceof DavError) return res.status(error.status).json({ message: error.message })
+    return next(error)
+  }
+})
 
 remoteDiskDavRouter.use(async (req, res: Response) => {
   res.set({ Allow: methods, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' })
@@ -349,6 +539,9 @@ remoteDiskDavRouter.use(async (req, res: Response) => {
       if (!allowed || req.destroyed) throw new DavError(403, 'Vínculo indisponível.')
       const tree = await treeFor(disk)
       const name = path.at(-1)!
+      const local = localParts.get(device.userId)
+      const reserved = [importNames.get(device.userId), local && !local.done ? nameKey(local.name) : undefined]
+      if (path.length === 1 && reserved.includes(nameKey(name))) throw new DavError(409, 'Aguarde a conclusão do envio.')
       const writeKey = JSON.stringify([device.id, path.map(nameKey)])
       if (req.method === 'PUT') {
         const mark = Symbol()
@@ -363,7 +556,7 @@ remoteDiskDavRouter.use(async (req, res: Response) => {
           const parent = await tree.ensureFolder(ancestors, mount)
           const { auth, drive } = await mount.client()
           try {
-            await save(req, drive, await auth.getRequestHeaders(), parent.file, name, size, item?.file)
+            await saveDriveStream(req.iterator({ destroyOnReturn: false }), drive, await auth.getRequestHeaders(), parent.file, name, size, remoteFileLimit, requestAborted(req), item?.file)
           } finally {
             if (tree.mounts.length > 1) await refreshAccountQuota(mount.account).catch(() => undefined)
           }
@@ -393,6 +586,7 @@ remoteDiskDavRouter.use(async (req, res: Response) => {
       }
       const target = destinationPath(req.get('Destination'), req.get('Host'))
       if (!target.length) throw new DavError(403, 'A raiz do disco não pode ser substituída.')
+      if (target.length === 1 && reserved.includes(nameKey(target[0]))) throw new DavError(409, 'Aguarde a conclusão do envio.')
       if (item.file.mimeType === folderMime && target.length > path.length && path.every((part, index) => nameKey(part) === nameKey(target[index]))) {
         throw new DavError(409, 'Uma pasta não pode ser movida para dentro dela mesma.')
       }

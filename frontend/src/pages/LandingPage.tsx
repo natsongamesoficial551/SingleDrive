@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom'
 import { GoogleLogo } from '@/components/auth/GoogleLogo'
 import './landing.css'
 
-const installerVersion = '0.6.2'
-const installer = `https://github.com/natsongamesoficial551/SingleDrive/releases/download/v${installerVersion}/SingleDrive-Windows-x64.msi`
+const installerVersion = '0.6.3'
+const installer = `https://github.com/natsongamesoficial551/SingleDrive/releases/download/v${installerVersion}/SingleDrive-${installerVersion}-x64.msi`
 
 function Wordmark() {
   return <span className="sd-landing-wordmark"><span aria-hidden="true">S</span>SingleDrive</span>

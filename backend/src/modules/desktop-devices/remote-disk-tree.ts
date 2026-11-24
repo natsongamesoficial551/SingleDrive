@@ -31,7 +31,7 @@ function visible(file: drive_v3.Schema$File): file is DiskFile {
     && (file.mimeType === folderMime || !file.mimeType.startsWith('application/vnd.google-apps.')))
 }
 
-async function findRoot(drive: Drive, userId: string) {
+export async function findRoot(drive: Drive, userId: string) {
   const { data } = await drive.files.list({
     q: "trashed = false and 'root' in parents and mimeType = '" + folderMime
       + "' and appProperties has { key='singleDriveRemoteOwner' and value='" + quote(userId) + "' }",

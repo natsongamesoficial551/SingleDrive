@@ -4,6 +4,7 @@ import type { DesktopDevice } from '@prisma/client'
 import { prisma } from '../../config/prisma.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
 import { maxDesktopDevices } from '../auth/account-capacity.js'
+import { previousDisk } from './disk-recovery.js'
 
 export const desktopDeviceRouter = Router()
 desktopDeviceRouter.use(requireAuth)
@@ -74,6 +75,7 @@ desktopDeviceRouter.post('/heartbeat', async (req: AuthRequest, res, next) => {
     if (changed.count !== 1) return res.status(403).json({ code: 'DEVICE_NOT_LINKED', message: 'Vincule este PC novamente.' })
     const device = await prisma.desktopDevice.findUniqueOrThrow({ where: { sessionId: req.user!.sessionId } })
     return res.json({ backupEnabled: device.backupEnabled,
+      remoteDiskRestorable: !device.remoteDiskRootId && !!await previousDisk(prisma, device),
       remoteDiskEnabled: device.remoteDiskEnabled, remoteDiskRootId: device.remoteDiskRootId })
   } catch (error) { return next(error) }
 })

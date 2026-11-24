@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { PageHeader } from '@/components/drive/PageHeader'
 import { apiFetch } from '@/lib/api'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { GoogleDriveBrowser, type GoogleDriveAccount } from '@/components/drive/GoogleDriveBrowser'
+import { RemoteDiskTransfers } from '@/components/drive/RemoteDiskTransfers'
 
 type Device = {
   id: string; name: string; appVersion: string; backupEnabled: boolean; runtimeStatus: string
@@ -56,7 +57,9 @@ const statuses: Record<string, string> = { idle: 'Aguardando', paused: 'Pausado'
 const date = (value: string) => new Date(value).toLocaleString('pt-BR')
 
 export function ComputersPage() {
+  const [searchParams] = useSearchParams()
   const [devices, setDevices] = useState<Device[]>([])
+  const [transferDevice, setTransferDevice] = useState<string | null>(() => searchParams.get('transfer'))
   const [accounts, setAccounts] = useState<GoogleDriveAccount[]>([])
   const [accountError, setAccountError] = useState('')
   const [diskBrowser, setDiskBrowser] = useState<string | null>(null)
@@ -110,7 +113,6 @@ export function ComputersPage() {
       await apiFetch('/remote-disk/devices/' + device.id, {
         method: 'PUT', body: JSON.stringify({
           enabled, ...(enablePool ? { poolEnabled: true } : {}),
-          ...(!device.remoteDiskAccountId && accounts[0] ? { accountId: accounts[0].id } : {}),
         }),
       })
       setMessage(joinAccounts ? 'Contas Google Drive unificadas neste disco.' : enabled
@@ -130,9 +132,9 @@ export function ComputersPage() {
         <div className="rounded-2xl bg-blue-50 p-3 text-blue-600"><Monitor className="h-6 w-6" /></div>
         <div className="min-w-0 flex-1">
           <h2 className="text-lg font-extrabold text-slate-950">Vincular este computador ({devices.filter(device => !device.revoked).length}/10)</h2>
-          <p className="mt-2 text-sm text-slate-600">Abra o SingleDrive Desktop no Windows, entre com a mesma conta usada aqui. No aplicativo, clique em Criar disco remoto para adicionar a unidade ao Explorador. Aqui você pode gerenciar o acesso e os arquivos.</p>
+          <p className="mt-2 text-sm text-slate-600">Abra o SingleDrive Desktop no Windows e entre com a sua conta. Depois de formatar, use a mesma conta e clique em Restaurar disco remoto para reabrir as pastas que já foram salvas no Google Drive.</p>
           <a href="singledrive-desktop://backup" className="mt-4 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-700">Abrir agente do SingleDrive</a>
-          <p className="mt-3 text-xs text-slate-500">Para recuperar pastas após formatar, use Restaurar backup no agente Windows. O aplicativo precisa ter sido aberto pelo menos uma vez neste PC. O Windows pedirá autorização para abri-lo.</p>
+          <p className="mt-3 text-xs text-slate-500">Para recuperar pastas locais incluídas no backup do PC, use Restaurar backup no agente Windows.</p>
         </div>
       </div>
     </Card>
@@ -142,6 +144,7 @@ export function ComputersPage() {
         const original = accounts.find(account => account.id === device.remoteDiskAccountId)
         const diskAccounts = device.remoteDiskPoolEnabled ? accounts : original ? [original] : []
         const canEdit = !device.revoked && device.remoteDiskEnabled !== undefined
+        const canRestoreDisk = !device.remoteDiskRootId && devices.some(other => other.id !== device.id && other.remoteDiskRootId)
         return <Card key={device.id} className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -163,7 +166,7 @@ export function ComputersPage() {
             : device.remoteDiskAccountId ? 'Acesso deste PC pausado.' : 'A unidade usa as contas Google Drive conectadas ao SingleDrive.'}</p>
           {canEdit && <div className="mt-3 flex flex-wrap items-center gap-2">
             {!!(device.remoteDiskAccountId || accounts.length) && <Button variant="outline" className="self-end" disabled={busy === device.id || (!device.remoteDiskEnabled && !!device.remoteDiskAccountId && !diskAccounts.length)} onClick={() => void changeDisk(device)}>
-              {device.remoteDiskEnabled ? 'Pausar disco' : device.remoteDiskAccountId ? 'Retomar disco' : 'Ativar disco'}
+              {device.remoteDiskEnabled ? 'Pausar disco' : device.remoteDiskAccountId ? 'Retomar disco' : canRestoreDisk ? 'Restaurar disco remoto' : 'Ativar disco'}
             </Button>}
             {device.remoteDiskPoolEnabled === false && device.remoteDiskAccountId && accounts.length > 0 && <Button variant="outline" disabled={busy === device.id} onClick={() => void changeDisk(device, true)}>Unir contas Google Drive</Button>}
             {device.remoteDiskEnabled && <a href="singledrive-desktop://backup" className="self-end rounded-xl px-3 py-2 text-sm font-bold text-blue-700">Abrir aplicativo Windows</a>}
@@ -176,6 +179,11 @@ export function ComputersPage() {
           {diskBrowser === device.id && diskAccounts.length > 0 && device.remoteDiskRootId && (device.remoteDiskPoolEnabled
             ? <DiskFiles device={device} accounts={diskAccounts} />
             : <GoogleDriveBrowser key={device.remoteDiskRootId} accounts={diskAccounts} remoteRootId={device.remoteDiskRootId} />)}
+          {canEdit && device.remoteDiskEnabled && device.remoteDiskRootId && <Button variant="outline" className="mt-3 ml-2"
+            aria-expanded={transferDevice === device.id} onClick={() => setTransferDevice(current => current === device.id ? null : device.id)}>
+            {transferDevice === device.id ? 'Ocultar transferências' : 'Salvar arquivos no disco'}
+          </Button>}
+          {canEdit && device.remoteDiskEnabled && device.remoteDiskRootId && transferDevice === device.id && <RemoteDiskTransfers key={device.id} deviceId={device.id} />}
         </section>}
         {!device.revoked && <div className="mt-5 flex flex-wrap gap-2">
           <Button variant="outline" disabled={busy === device.id} onClick={() => void change(device)}>{device.backupEnabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}{device.backupEnabled ? 'Pausar backup' : 'Retomar backup'}</Button>

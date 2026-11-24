@@ -13,6 +13,7 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().default(900),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().default(30),
   MAX_UPLOAD_BYTES: z.coerce.number().default(5 * 1024 * 1024 * 1024),
+  MAX_REMOTE_DISK_FILE_BYTES: z.coerce.number().int().positive().max(5 * 1024 ** 4).default(5 * 1024 ** 4),
   RECAPTCHA_SECRET_KEY: z.string().optional(),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   DISCORD_BOT_TOKEN: z.string().min(1).optional(),

@@ -25,11 +25,13 @@ internal sealed class BackupForm : Form
     private readonly Label status = new() { AutoSize = true, Text = "Parado" };
     private readonly Button diskToggle = new() { Text = "Criar disco remoto", Width = 170 };
     private readonly Button diskOpen = new() { Text = "Abrir disco", Width = 120, Enabled = false };
+    private readonly Button diskTransfer = new() { Text = "Salvar arquivos no disco", Width = 170, Enabled = false };
     private readonly Label diskStatus = new() { AutoSize = true, MaximumSize = new Size(560, 0), Text = "Entre com Google para criar a unidade." };
     private bool diskConsent;
     private bool diskSetupBusy;
     private bool diskPolicyKnown;
     private bool diskEnabled;
+    private bool diskRestorable;
     private bool openDiskWhenReady;
     private string? diskRootId;
     private RemoteDiskMount? remoteDisk;
@@ -115,12 +117,19 @@ internal sealed class BackupForm : Form
         var diskRow = new FlowLayoutPanel { Width = 580, Height = 36, WrapContents = false };
         diskRow.Controls.Add(diskToggle);
         diskRow.Controls.Add(diskOpen);
+        diskRow.Controls.Add(diskTransfer);
         panel.Controls.Add(diskRow);
         panel.Controls.Add(diskStatus);
         diskToggle.Click += async (_, _) => await ConfigureRemoteDiskAsync();
         diskOpen.Click += (_, _) =>
         {
             try { remoteDisk?.Open(); }
+            catch (Exception ex) { diskStatus.Text = ex.Message; }
+        };
+        diskTransfer.Click += (_, _) =>
+        {
+            if (deviceId is null) return;
+            try { Process.Start(new ProcessStartInfo(new Uri(ApiOrigin, $"/computers?transfer={Uri.EscapeDataString(deviceId)}").AbsoluteUri) { UseShellExecute = true }); }
             catch (Exception ex) { diskStatus.Text = ex.Message; }
         };
         panel.Controls.Add(new Label { Text = "Pasta local para backup", AutoSize = true });
@@ -559,7 +568,7 @@ internal sealed class BackupForm : Form
     {
         using var timeout = new CancellationTokenSource(HeartbeatIntervalMs);
         using var result = await AgentRequestAsync("desktop-devices/register", HttpMethod.Post,
-            new { name = Environment.MachineName, platform = "windows", appVersion = "0.6.2" }, timeout.Token);
+            new { name = Environment.MachineName, platform = "windows", appVersion = "0.6.3" }, timeout.Token);
         deviceId = result.RootElement.GetProperty("device").GetProperty("id").GetString();
     }
 
@@ -658,6 +667,7 @@ internal sealed class BackupForm : Form
     {
         diskPolicyKnown = policy.TryGetProperty("remoteDiskEnabled", out var enabled);
         diskEnabled = diskPolicyKnown && enabled.GetBoolean();
+        diskRestorable = policy.TryGetProperty("remoteDiskRestorable", out var restorable) && restorable.GetBoolean();
         diskRootId = diskPolicyKnown ? policy.GetProperty("remoteDiskRootId").GetString() : null;
         SetDiskButtons();
         if (!diskEnabled)
@@ -665,6 +675,7 @@ internal sealed class BackupForm : Form
             StopRemoteDisk();
             if (!diskSetupBusy)
                 diskStatus.Text = !diskPolicyKnown ? "O servidor ainda não oferece disco remoto."
+                    : diskRestorable ? "Recupere as pastas que já foram salvas no Google Drive."
                     : diskRootId is null ? "Crie uma unidade para salvar no Google Drive." : "Disco pausado no site.";
             return;
         }
@@ -727,9 +738,11 @@ internal sealed class BackupForm : Form
 
     private void SetDiskButtons()
     {
-        diskToggle.Text = diskConsent && diskEnabled ? "Desconectar disco" : diskRootId is null ? "Criar disco remoto" : "Conectar disco remoto";
+        diskToggle.Text = diskConsent && diskEnabled ? "Desconectar disco"
+            : diskRestorable ? "Restaurar disco remoto" : diskRootId is null ? "Criar disco remoto" : "Conectar disco remoto";
         diskToggle.Enabled = !diskSetupBusy && (diskEnabled || diskRootId is null);
         diskOpen.Enabled = remoteDisk?.Ready == true;
+        diskTransfer.Enabled = diskEnabled && deviceId is not null;
     }
 
     private async Task StopBackupAsync()
@@ -752,6 +765,7 @@ internal sealed class BackupForm : Form
         diskConsent = false;
         diskPolicyKnown = false;
         diskEnabled = false;
+        diskRestorable = false;
         diskRootId = null;
         StopRemoteDisk();
         diskStatus.Text = "Entre com Google para criar a unidade.";

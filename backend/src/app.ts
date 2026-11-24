@@ -35,6 +35,7 @@ const parseJson = express.json({ limit: '1mb' })
 app.use((req, res, next) => {
   // O corpo de trechos é binário mesmo quando o arquivo original é JSON.
   if (req.method === 'PUT' && /^\/uploads\/resumable\/chunk\/[^/]+\/?$/.test(req.path)) return next()
+  if (req.method === 'PUT' && /^\/remote-disk\/devices\/[^/]+\/upload\/[^/]+\/?$/.test(req.path)) return next()
   return parseJson(req, res, next)
 })
 app.use((_req, res, next) => {
