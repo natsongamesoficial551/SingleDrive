@@ -27,6 +27,6 @@ jobs:
             --connect-timeout 10 --max-time 100 \
             --retry 1 --retry-delay 5 --retry-max-time 210 \
             --header 'Accept: application/json' \
-            https://singledrive.onrender.com/health)"
+            https://singledrive-api.onrender.com/health)"
           printf '%s' "$response" | python3 -c 'import json,sys; result=json.load(sys.stdin); sys.exit(0 if result.get("status") == "ok" else 1)'
           printf 'API disponível.\n' >> "$GITHUB_STEP_SUMMARY"

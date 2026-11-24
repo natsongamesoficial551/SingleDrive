@@ -20,7 +20,7 @@ Render Free suspende web services após 15 minutos sem tráfego de entrada. A pr
 
 O Neon também suspende compute após cinco minutos de inatividade. Sua documentação descreve retomada rápida na próxima consulta. Pingar somente o banco não acordaria uma API Render suspensa. Manter o banco ativo continuamente aumenta consumo de compute sem demonstrar que resolveria a espera principal.
 
-O workflow `.github/workflows/keep-api-warm.yml` faz GET HTTPS em `https://singledrive.onrender.com/health` a cada dez minutos, nos minutos 03, 13, 23, 33, 43 e 53. Também pode ser iniciado manualmente no GitHub Actions. Não depende do PC do operador, não utiliza secrets, não faz checkout e não possui permissões de escrita no GitHub.
+O workflow `.github/workflows/keep-api-warm.yml` faz GET HTTPS em `https://singledrive-api.onrender.com/health` a cada dez minutos, nos minutos 03, 13, 23, 33, 43 e 53. Também pode ser iniciado manualmente no GitHub Actions. Não depende do PC do operador, não utiliza secrets, não faz checkout e não possui permissões de escrita no GitHub.
 
 `/health` responde somente com o estado do processo. O ping não consulta banco, login, Google Drive ou conteúdo de usuários. É necessário que GitHub Actions esteja habilitado e que o workflow esteja na branch padrão.
 

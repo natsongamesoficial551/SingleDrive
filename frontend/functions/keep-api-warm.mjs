@@ -2,7 +2,7 @@
 export default async function keepApiWarm() {
   const started = Date.now()
   try {
-    const response = await fetch('https://singledrive.onrender.com/health', {
+    const response = await fetch('https://singledrive-api.onrender.com/health', {
       headers: { Accept: 'application/json' },
       redirect: 'error',
       signal: AbortSignal.timeout(20_000),

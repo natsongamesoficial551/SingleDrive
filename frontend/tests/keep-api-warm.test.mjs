@@ -4,7 +4,7 @@ import keepApiWarm, { config } from '../functions/keep-api-warm.mjs'
 
 test('ping usa somente o destino fixo, sem credenciais, e valida saúde', async t => {
   t.mock.method(globalThis, 'fetch', async (url, options) => {
-    assert.equal(url, 'https://singledrive.onrender.com/health')
+    assert.equal(url, 'https://singledrive-api.onrender.com/health')
     assert.equal(options.redirect, 'error')
     assert.equal(options.headers.Authorization, undefined)
     assert.equal(options.body, undefined)

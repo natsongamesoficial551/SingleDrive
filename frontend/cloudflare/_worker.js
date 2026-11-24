@@ -1,5 +1,5 @@
 // Pages Advanced Mode: mantém /api e o cookie HttpOnly na origem do frontend.
-const apiOrigin = 'https://singledrive.onrender.com'
+const apiOrigin = 'https://singledrive-api.onrender.com'
 const windows = new Map()
 let nextSweep = 0
 
