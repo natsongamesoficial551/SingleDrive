@@ -8,6 +8,21 @@ public static class DesktopAgent
 {
     public static readonly string SiteUrl = "https://singledrive.pages.dev/login";
     private const string DiscordUrl = "https://singledrive.pages.dev/discord";
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private static string StartupCommand => $"\"{Environment.ProcessPath}\" --background";
+
+    internal static bool StartupEnabled()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+        return key?.GetValue("SingleDrive") is string;
+    }
+
+    internal static void SetStartup(bool enabled)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(RunKey);
+        if (enabled) key.SetValue("SingleDrive", StartupCommand);
+        else key.DeleteValue("SingleDrive", false);
+    }
 
     public static void Run(string[] args, bool initiallyVisible, Action? onStarted = null)
     {
@@ -36,6 +51,13 @@ public static class DesktopAgent
         var configure = args.Length == 1 && args[0].TrimEnd('/') == "singledrive-desktop://backup";
         if (args.Length > 0 && !background && !configure) return;
 
+        // Reparar atalhos antigos ao abrir a edição instalada, mesmo se outro agente estiver rodando.
+        if (!background && onStarted is not null &&
+            string.Equals(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SingleDrive"),
+                StringComparison.OrdinalIgnoreCase) && StartupEnabled())
+            SetStartup(true);
+
         var sid = WindowsIdentity.GetCurrent().User!.Value;
         using var mutex = new Mutex(true, $@"Local\SingleDrive.Agent.{sid}", out var firstInstance);
         using var openSignal = new EventWaitHandle(false, EventResetMode.AutoReset, $@"Local\SingleDrive.Open.{sid}");
@@ -54,7 +76,17 @@ public static class DesktopAgent
             command.SetValue("", $"\"{Environment.ProcessPath}\" \"%1\"");
             ApplicationConfiguration.Initialize();
             if (!background && !configure) onStarted?.Invoke();
-            Application.Run(new BackupForm((initiallyVisible || configure) && !background, openSignal));
+            using var agent = new BackupForm(openSignal);
+            if (!background && (initiallyVisible || configure))
+            {
+                Application.Run(agent);
+            }
+            else
+            {
+                _ = agent.Handle;
+                agent.FormClosed += (_, _) => Application.ExitThread();
+                Application.Run();
+            }
         }
         finally { mutex.ReleaseMutex(); }
     }

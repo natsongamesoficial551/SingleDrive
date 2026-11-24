@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { GoogleLogo } from '@/components/auth/GoogleLogo'
 import './landing.css'
 
-const installerVersion = '0.6.1'
+const installerVersion = '0.6.2'
 const installer = `https://github.com/natsongamesoficial551/SingleDrive/releases/download/v${installerVersion}/SingleDrive-Windows-x64.msi`
 
 function Wordmark() {

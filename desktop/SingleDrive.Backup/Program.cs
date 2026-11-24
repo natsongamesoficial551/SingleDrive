@@ -54,14 +54,15 @@ internal sealed class BackupForm : Form
     private bool restoring;
     private Task? backupTask;
     private readonly NotifyIcon tray;
-    private readonly System.Windows.Forms.Timer heartbeatTimer = new() { Interval = 30_000 };
+    private const int HeartbeatIntervalMs = 30_000;
+    private readonly System.Windows.Forms.Timer heartbeatTimer = new() { Interval = 1 };
     private readonly System.Windows.Forms.Timer openTimer = new() { Interval = 500 };
     private readonly System.Windows.Forms.Timer diskTimer = new() { Interval = 1000 };
     private string StatePath => Path.Combine(Path.GetDirectoryName(settingsPath)!, $"backup-v3-{accountId}.bin");
     private readonly Dictionary<string, FileStamp> sent = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? cancellation;
 
-    public BackupForm(bool initiallyVisible, EventWaitHandle openSignal)
+    public BackupForm(EventWaitHandle openSignal)
     {
         http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies, UseCookies = true }) { Timeout = TimeSpan.FromMinutes(30) };
         Text = "SingleDrive — Computador";
@@ -74,19 +75,28 @@ internal sealed class BackupForm : Form
         trayMenu.Items.Add("Encerrar agente", null, (_, _) => { exitRequested = true; Close(); });
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "SingleDrive — agente do PC", ContextMenuStrip = trayMenu, Visible = true };
         tray.DoubleClick += (_, _) => ShowAgent();
-        FormClosing += (_, e) => { if (!exitRequested) { e.Cancel = true; Hide(); } else { StopRemoteDisk(); cancellation?.Cancel(); heartbeatTimer.Stop(); openTimer.Stop(); tray.Dispose(); } };
+        FormClosing += (_, e) =>
+        {
+            if (!exitRequested && e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                Hide();
+                return;
+            }
+            exitRequested = true;
+            StopRemoteDisk();
+            cancellation?.Cancel();
+            heartbeatTimer.Stop();
+            openTimer.Stop();
+            tray.Dispose();
+        };
         openTimer.Tick += (_, _) => { if (openSignal.WaitOne(0)) ShowAgent(); };
         openTimer.Start();
         diskTimer.Tick += (_, _) => CheckRemoteDisk();
-        heartbeatTimer.Tick += async (_, _) => await HeartbeatAsync();
-        Shown += async (_, _) =>
+        heartbeatTimer.Tick += async (_, _) =>
         {
-            if (!initiallyVisible) Hide();
-            try
-            {
-                if (await RefreshAsync(ApiOrigin)) { await RegisterDeviceAsync(); heartbeatTimer.Start(); await HeartbeatAsync(); }
-            }
-            catch (Exception ex) { status.Text = $"Não foi possível vincular o PC: {ex.Message}"; }
+            heartbeatTimer.Interval = HeartbeatIntervalMs;
+            await HeartbeatAsync();
         };
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(16), AutoScroll = true };
         Controls.Add(panel);
@@ -127,16 +137,12 @@ internal sealed class BackupForm : Form
         panel.Controls.Add(status);
         panel.Controls.Add(new Label { Text = "Envios automáticos a cada 2 minutos. Exclusões locais não apagam arquivos remotos.", AutoSize = true });
         var startup = new CheckBox { Text = "Iniciar agente ao entrar no Windows", AutoSize = true };
-        using (var runKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) startup.Checked = runKey?.GetValue("SingleDrive") is not null;
-        startup.CheckedChanged += (_, _) =>
-        {
-            using var runKey = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
-            if (startup.Checked) runKey.SetValue("SingleDrive", $"\"{Environment.ProcessPath}\" --background");
-            else runKey.DeleteValue("SingleDrive", false);
-        };
+        startup.Checked = DesktopAgent.StartupEnabled();
+        startup.CheckedChanged += (_, _) => DesktopAgent.SetStartup(startup.Checked);
         panel.Controls.Add(startup);
         toggle.Click += async (_, _) => await ToggleAsync();
         LoadSettings();
+        if (cookies.GetCookies(ApiOrigin)["__Host-sd_refresh"] is not null) heartbeatTimer.Start();
     }
 
     private void LoadSettings()
@@ -480,8 +486,9 @@ internal sealed class BackupForm : Form
                 diskConsent = false;
                 SetDiskButtons();
                 await SaveSettingsAsync(baseUri);
-                await RegisterDeviceAsync();
+                heartbeatTimer.Interval = HeartbeatIntervalMs;
                 heartbeatTimer.Start();
+                await RegisterDeviceAsync();
                 status.Text = "Conta conectada. O PC está vinculado.";
                 await HeartbeatAsync();
                 return;
@@ -503,14 +510,16 @@ internal sealed class BackupForm : Form
         command.SetValue("", $"\"{Environment.ProcessPath}\" \"%1\"");
     }
 
-    private async Task<bool> RefreshAsync(Uri baseUri)
+    private async Task<bool> RefreshAsync(Uri baseUri, CancellationToken cancellationToken = default)
     {
-        await refreshLock.WaitAsync();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(HeartbeatIntervalMs);
+        await refreshLock.WaitAsync(timeout.Token);
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(baseUri, "auth/refresh"));
             request.Headers.Add("X-SingleDrive-Desktop", "1");
-            using var response = await http.SendAsync(request);
+            using var response = await http.SendAsync(request, timeout.Token);
             if (response.StatusCode == HttpStatusCode.Unauthorized) { accessToken = null; return false; }
             if (!response.IsSuccessStatusCode) throw new IOException($"Servidor temporariamente indisponível ({(int)response.StatusCode}).");
             using var data = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -522,18 +531,18 @@ internal sealed class BackupForm : Form
         finally { refreshLock.Release(); }
     }
 
-    private async Task<JsonDocument> AgentRequestAsync(string path, HttpMethod method, object? body)
+    private async Task<JsonDocument> AgentRequestAsync(string path, HttpMethod method, object? body, CancellationToken cancellationToken = default)
     {
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            if (accessToken is null && !await RefreshAsync(ApiOrigin)) throw new UnauthorizedAccessException("Entre novamente com Google.");
+            if (accessToken is null && !await RefreshAsync(ApiOrigin, cancellationToken)) throw new UnauthorizedAccessException("Entre novamente com Google.");
             using var request = new HttpRequestMessage(method, new Uri(ApiOrigin, path)) { Content = body is null ? null : JsonContent(body) };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            using var response = await http.SendAsync(request);
+            using var response = await http.SendAsync(request, cancellationToken);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
                 accessToken = null;
-                if (attempt == 0 && await RefreshAsync(ApiOrigin)) continue;
+                if (attempt == 0 && await RefreshAsync(ApiOrigin, cancellationToken)) continue;
                 throw new UnauthorizedAccessException("O vínculo expirou ou foi revogado.");
             }
             if (response.StatusCode == HttpStatusCode.Forbidden) throw new UnauthorizedAccessException("Vincule o PC novamente pelo login Google.");
@@ -548,8 +557,9 @@ internal sealed class BackupForm : Form
 
     private async Task RegisterDeviceAsync()
     {
+        using var timeout = new CancellationTokenSource(HeartbeatIntervalMs);
         using var result = await AgentRequestAsync("desktop-devices/register", HttpMethod.Post,
-            new { name = Environment.MachineName, platform = "windows", appVersion = "0.6.1" });
+            new { name = Environment.MachineName, platform = "windows", appVersion = "0.6.2" }, timeout.Token);
         deviceId = result.RootElement.GetProperty("device").GetProperty("id").GetString();
     }
 
@@ -560,15 +570,21 @@ internal sealed class BackupForm : Form
 
     private async Task HeartbeatAsync()
     {
-        if (heartbeatBusy || toggling || deviceId is null) return;
+        if (heartbeatBusy || toggling || exitRequested) return;
+        var restoringSession = deviceId is null;
+        if (restoringSession && (!login.Enabled || cookies.GetCookies(ApiOrigin)["__Host-sd_refresh"] is null)) return;
         heartbeatBusy = true;
+        if (restoringSession) login.Enabled = false;
         try
         {
+            if (restoringSession) await RegisterDeviceAsync();
+            if (exitRequested) return;
+            using var timeout = new CancellationTokenSource(HeartbeatIntervalMs);
             using var result = await AgentRequestAsync("desktop-devices/heartbeat", HttpMethod.Post, new {
                 runtimeStatus, sourceNames = string.IsNullOrEmpty(folder.Text) ? Array.Empty<string>() : new[] { string.IsNullOrEmpty(new DirectoryInfo(folder.Text).Name) ? "Pasta raiz" : new DirectoryInfo(folder.Text).Name },
                 uploadedFiles = sent.Values.Count(stamp => stamp.Size >= 0), completedScan = scanCompleted,
                 remoteDiskMounted = remoteDisk?.Ready == true,
-            });
+            }, timeout.Token);
             scanCompleted = false;
             await UpdateRemoteDiskAsync(result.RootElement);
             var enabled = result.RootElement.GetProperty("backupEnabled").GetBoolean();
@@ -580,7 +596,11 @@ internal sealed class BackupForm : Form
             await ClearDeviceAsync();
         }
         catch (Exception) { status.Text = "Sem contato com o servidor. Tentaremos novamente em 30 segundos."; }
-        finally { heartbeatBusy = false; }
+        finally
+        {
+            if (restoringSession) login.Enabled = true;
+            heartbeatBusy = false;
+        }
     }
 
     private async Task ConfigureRemoteDiskAsync()
@@ -657,7 +677,8 @@ internal sealed class BackupForm : Form
         if (DateTime.UtcNow < diskRetryAt) return;
         try
         {
-            using var data = await AgentRequestAsync("remote-disk/mount-key", HttpMethod.Post, new { });
+            using var timeout = new CancellationTokenSource(HeartbeatIntervalMs);
+            using var data = await AgentRequestAsync("remote-disk/mount-key", HttpMethod.Post, new { }, timeout.Token);
             if (!diskConsent || exitRequested) return;
             var key = data.RootElement.GetProperty("key").GetString()!;
             remoteDisk = new RemoteDiskMount(accountId, root, key);
