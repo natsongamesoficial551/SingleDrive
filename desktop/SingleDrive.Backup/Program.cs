@@ -568,7 +568,7 @@ internal sealed class BackupForm : Form
     {
         using var timeout = new CancellationTokenSource(HeartbeatIntervalMs);
         using var result = await AgentRequestAsync("desktop-devices/register", HttpMethod.Post,
-            new { name = Environment.MachineName, platform = "windows", appVersion = "0.6.4" }, timeout.Token);
+            new { name = Environment.MachineName, platform = "windows", appVersion = "0.6.5" }, timeout.Token);
         deviceId = result.RootElement.GetProperty("device").GetProperty("id").GetString();
     }
 

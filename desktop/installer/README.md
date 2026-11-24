@@ -2,6 +2,8 @@
 
 O pacote x64 instala no diretório **Arquivos de Programas**, cria atalhos no menu Iniciar e na Área de Trabalho e aparece em **Aplicativos instalados**. O aplicativo inclui o runtime .NET 8 e o rclone. Na primeira montagem, ele verifica o SHA-256 do instalador oficial do WinFsp que acompanha o pacote e o abre se o driver estiver ausente.
 
+Ao abrir um MSI mais recente, o Windows Installer detecta a versão instalada e atualiza o aplicativo. As configurações em `%LOCALAPPDATA%\SingleDrive` são preservadas. Se a atualização falhar, o Windows Installer pode restaurar a versão anterior.
+
 ## Gerar o pacote
 
 Use o SDK .NET 8, WiX CLI 6.0.2 e a extensão `WixToolset.UI.wixext/6.0.2`. Execute os comandos WiX e o script a partir do mesmo diretório.
