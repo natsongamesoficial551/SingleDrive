@@ -37,30 +37,36 @@ jobs:
           }
           foreach ($version in @('0.6.2', '0.6.4')) {
             $asset = if ($version -eq '0.6.2') { 'SingleDrive-Windows-x64.msi' } else { "SingleDrive-$version-x64.msi" }
-            curl.exe -fLsS --retry 3 "https://github.com/natsongamesoficial551/SingleDrive/releases/download/v$version/$asset" -o "$work/$version.msi"
+            $package = Join-Path $work "$version.msi"
+            curl.exe -fLsS --retry 3 "https://github.com/natsongamesoficial551/SingleDrive/releases/download/v$version/$asset" -o $package
             if ($LASTEXITCODE -ne 0) { throw "Release $version could not be downloaded" }
           }
-          Invoke-Msi "/a `"$work/0.6.4.msi`" TARGETDIR=`"$work/extract`"" 'extract'
+          $previous = Join-Path $work '0.6.4.msi'
+          $extract = Join-Path $work 'extract'
+          New-Item -ItemType Directory -Path $extract | Out-Null
+          Invoke-Msi "/a `"$previous`" TARGETDIR=`"$extract`"" 'extract'
           $payload = (Get-ChildItem "$work/extract" -Recurse -Filter rclone.exe).Directory.FullName
           dotnet tool install wix --version 6.0.2 --tool-path "$work/tools"
           if ($LASTEXITCODE -ne 0) { throw 'WiX installation failed' }
           $wix = Join-Path $work 'tools/wix.exe'
           & $wix extension add WixToolset.UI.wixext/6.0.2
           if ($LASTEXITCODE -ne 0) { throw 'WiX extension installation failed' }
-          ./desktop/installer/Build-Msi.ps1 -RcloneFolder $payload -WinFspFolder $payload -WorkDirectory "$work/build" -OutputMsi "$work/0.6.5.msi" -Wix $wix
-          Invoke-Msi "/i `"$work/0.6.5.msi`"" 'fresh-065'
+          $candidate = Join-Path $work '0.6.5.msi'
+          ./desktop/installer/Build-Msi.ps1 -RcloneFolder $payload -WinFspFolder $payload -WorkDirectory "$work/build" -OutputMsi $candidate -Wix $wix
+          Invoke-Msi "/i `"$candidate`"" 'fresh-065'
           $product = Assert-Installed '0.6.5'
           Invoke-Msi "/x $product" 'remove-065'
           foreach ($version in @('0.6.2', '0.6.4')) {
-            Invoke-Msi "/i `"$work/$version.msi`"" "install-$version"
+            $previous = Join-Path $work "$version.msi"
+            Invoke-Msi "/i `"$previous`"" "install-$version"
             $olderProduct = Assert-Installed $version
             $settingsDir = New-Item -ItemType Directory -Force "$env:LOCALAPPDATA/SingleDrive"
             $sentinel = Join-Path $settingsDir 'upgrade-test.txt'
             Set-Content $sentinel 'preserve me'
-            Invoke-Msi "/i `"$work/0.6.5.msi`"" "upgrade-$version"
+            Invoke-Msi "/i `"$candidate`"" "upgrade-$version"
             $product = Assert-Installed '0.6.5'
             if ($product -eq $olderProduct -or (Get-Content $sentinel) -ne 'preserve me') { throw 'Upgrade did not preserve user data or change the product registration' }
-            Invoke-Msi "/i `"$work/$version.msi`"" "reject-downgrade-$version" @(1603)
+            Invoke-Msi "/i `"$previous`"" "reject-downgrade-$version" @(1603)
             $null = Assert-Installed '0.6.5'
             Invoke-Msi "/x $product" "remove-upgraded-$version"
           }
