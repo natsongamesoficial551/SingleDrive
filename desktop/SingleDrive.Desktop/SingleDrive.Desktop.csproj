@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>SingleDrive.Desktop</AssemblyName>
+    <ApplicationIcon>../branding/SingleDrive.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../SingleDrive.Backup/SingleDrive.Backup.csproj" />

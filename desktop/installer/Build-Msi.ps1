@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)] [string] $WinFspFolder,
     [Parameter(Mandatory)] [string] $WorkDirectory,
     [Parameter(Mandatory)] [string] $OutputMsi,
-    [string] $Version = '0.6.5',
+    [string] $Version = '0.6.6',
     [string] $Dotnet = 'dotnet',
     [string] $Wix = 'wix'
 )
@@ -40,11 +40,15 @@ $license = (Get-Content -Raw -LiteralPath (Join-Path $repo 'LICENSE')).TrimEnd()
 $license = $license.Replace('\', '\\').Replace('{', '\{').Replace('}', '\}')
 $license = $license.Replace([string][char]13, '').Replace([string][char]10, '\par ')
 $rtf = Join-Path $work 'License.rtf'
-[IO.File]::WriteAllText($rtf, ('{\rtf1\ansi\deff0{\fonttbl{\f0 Segoe UI;}}\f0\fs18 ' + $license + '}'), [Text.Encoding]::ASCII)
+[IO.File]::WriteAllText($rtf, ('{\rtf1\ansi\deff0{\fonttbl{\f0 Segoe UI;}}\f0\fs26\b SingleDrive\b0\par \fs18 ' + $license + '}'), [Text.Encoding]::ASCII)
+$brandIcon = Join-Path $repo 'desktop/branding/SingleDrive.ico'
+& (Join-Path $PSScriptRoot 'New-InstallerArtwork.ps1') -IconPath $brandIcon -OutputDirectory $work
 
 $buildArgs = @(
     'build', (Join-Path $PSScriptRoot 'SingleDrive.wxs'), '-arch', 'x64', '-culture', 'pt-BR',
-    '-ext', 'WixToolset.UI.wixext', '-d', "Payload=$payload", '-d', "ProductVersion=$Version", '-d', "LicenseRtf=$rtf",
+    '-ext', 'WixToolset.UI.wixext', '-ext', 'WixToolset.Util.wixext',
+    '-d', "Payload=$payload", '-d', "ProductVersion=$Version", '-d', "LicenseRtf=$rtf",
+    '-d', "BrandIcon=$brandIcon", '-d', "BrandBanner=$(Join-Path $work 'Banner.bmp')", '-d', "BrandDialog=$(Join-Path $work 'Dialog.bmp')",
     '-intermediateFolder', (Join-Path $work 'wixobj'), '-pdbtype', 'none', '-out', $output
 )
 & $Wix @buildArgs

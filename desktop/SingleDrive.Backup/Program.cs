@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows.Forms;
 using System.Diagnostics;
-using Microsoft.Win32;
+using System.Reflection;
 
 namespace SingleDrive.Backup;
 
@@ -37,6 +37,7 @@ internal sealed class BackupForm : Form
     private RemoteDiskMount? remoteDisk;
     private DateTime diskRetryAt;
     private DateTime diskStartedAt;
+    private int diskRetrySeconds = 5;
     private readonly SemaphoreSlim settingsLock = new(1, 1);
     private readonly Button toggle = new() { Text = "Iniciar backup", Width = 140 };
     private readonly SemaphoreSlim scanLock = new(1, 1);
@@ -56,6 +57,7 @@ internal sealed class BackupForm : Form
     private bool restoring;
     private Task? backupTask;
     private readonly NotifyIcon tray;
+    private readonly Icon? appIcon;
     private const int HeartbeatIntervalMs = 30_000;
     private readonly System.Windows.Forms.Timer heartbeatTimer = new() { Interval = 1 };
     private readonly System.Windows.Forms.Timer openTimer = new() { Interval = 500 };
@@ -75,7 +77,9 @@ internal sealed class BackupForm : Form
         trayMenu.Items.Add("Abrir SingleDrive", null, (_, _) => DesktopAgent.OpenWebsite());
         trayMenu.Items.Add("Configurar computador", null, (_, _) => ShowAgent());
         trayMenu.Items.Add("Encerrar agente", null, (_, _) => { exitRequested = true; Close(); });
-        tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "SingleDrive — agente do PC", ContextMenuStrip = trayMenu, Visible = true };
+        appIcon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+        Icon = appIcon;
+        tray = new NotifyIcon { Icon = appIcon ?? SystemIcons.Application, Text = "SingleDrive — agente do PC", ContextMenuStrip = trayMenu, Visible = true };
         tray.DoubleClick += (_, _) => ShowAgent();
         FormClosing += (_, e) =>
         {
@@ -91,15 +95,12 @@ internal sealed class BackupForm : Form
             heartbeatTimer.Stop();
             openTimer.Stop();
             tray.Dispose();
+            appIcon?.Dispose();
         };
         openTimer.Tick += (_, _) => { if (openSignal.WaitOne(0)) ShowAgent(); };
         openTimer.Start();
         diskTimer.Tick += (_, _) => CheckRemoteDisk();
-        heartbeatTimer.Tick += async (_, _) =>
-        {
-            heartbeatTimer.Interval = HeartbeatIntervalMs;
-            await HeartbeatAsync();
-        };
+        heartbeatTimer.Tick += async (_, _) => await HeartbeatAsync();
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(16), AutoScroll = true };
         Controls.Add(panel);
         panel.Controls.Add(new Label { Text = "Vincule este PC à mesma conta Google do SingleDrive.", AutoSize = true });
@@ -121,6 +122,21 @@ internal sealed class BackupForm : Form
         panel.Controls.Add(diskRow);
         panel.Controls.Add(diskStatus);
         diskToggle.Click += async (_, _) => await ConfigureRemoteDiskAsync();
+        Shown += async (_, _) =>
+        {
+            if (!RemoteDiskMount.NeedsBundledDriver || diskSetupBusy) return;
+            diskSetupBusy = true;
+            SetDiskButtons();
+            try
+            {
+                await RemoteDiskMount.PrepareAsync(message => diskStatus.Text = message);
+                diskStatus.Text = deviceId is null ? "Entre com Google para criar a unidade." : "Dependências da unidade instaladas.";
+                diskRetryAt = DateTime.MinValue;
+                await HeartbeatAsync();
+            }
+            catch (Exception ex) { diskStatus.Text = $"Disco remoto: {ex.Message}"; }
+            finally { diskSetupBusy = false; SetDiskButtons(); }
+        };
         diskOpen.Click += (_, _) =>
         {
             try { remoteDisk?.Open(); }
@@ -456,7 +472,7 @@ internal sealed class BackupForm : Form
         login.Enabled = false;
         try
         {
-            RegisterProtocol();
+            DesktopAgent.RegisterProtocol();
             var verifier = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
             var challenge = Convert.ToBase64String(SHA256.HashData(System.Text.Encoding.ASCII.GetBytes(verifier))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(baseUri, "auth/google/start"))
@@ -510,15 +526,6 @@ internal sealed class BackupForm : Form
 
     private static StringContent JsonContent(object value) => new(JsonSerializer.Serialize(value), System.Text.Encoding.UTF8, "application/json");
 
-    private static void RegisterProtocol()
-    {
-        using var scheme = Registry.CurrentUser.CreateSubKey(@"Software\Classes\singledrive-desktop");
-        scheme.SetValue("", "URL:SingleDrive Desktop");
-        scheme.SetValue("URL Protocol", "");
-        using var command = scheme.CreateSubKey(@"shell\open\command");
-        command.SetValue("", $"\"{Environment.ProcessPath}\" \"%1\"");
-    }
-
     private async Task<bool> RefreshAsync(Uri baseUri, CancellationToken cancellationToken = default)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -568,7 +575,7 @@ internal sealed class BackupForm : Form
     {
         using var timeout = new CancellationTokenSource(HeartbeatIntervalMs);
         using var result = await AgentRequestAsync("desktop-devices/register", HttpMethod.Post,
-            new { name = Environment.MachineName, platform = "windows", appVersion = "0.6.5" }, timeout.Token);
+            new { name = Environment.MachineName, platform = "windows", appVersion = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0" }, timeout.Token);
         deviceId = result.RootElement.GetProperty("device").GetProperty("id").GetString();
     }
 
@@ -579,6 +586,7 @@ internal sealed class BackupForm : Form
 
     private async Task HeartbeatAsync()
     {
+        heartbeatTimer.Interval = HeartbeatIntervalMs;
         if (heartbeatBusy || toggling || exitRequested) return;
         var restoringSession = deviceId is null;
         if (restoringSession && (!login.Enabled || cookies.GetCookies(ApiOrigin)["__Host-sd_refresh"] is null)) return;
@@ -596,6 +604,8 @@ internal sealed class BackupForm : Form
             }, timeout.Token);
             scanCompleted = false;
             await UpdateRemoteDiskAsync(result.RootElement);
+            if (diskEnabled && diskConsent && remoteDisk is null)
+                heartbeatTimer.Interval = (int)Math.Clamp((diskRetryAt - DateTime.UtcNow).TotalMilliseconds, 1_000, HeartbeatIntervalMs);
             var enabled = result.RootElement.GetProperty("backupEnabled").GetBoolean();
             if (!enabled) await StopBackupAsync();
             else if (localConsent) await StartBackupAsync();
@@ -604,7 +614,11 @@ internal sealed class BackupForm : Form
         {
             await ClearDeviceAsync();
         }
-        catch (Exception) { status.Text = "Sem contato com o servidor. Tentaremos novamente em 30 segundos."; }
+        catch (Exception)
+        {
+            if (diskConsent && remoteDisk is null) heartbeatTimer.Interval = 5_000;
+            status.Text = $"Sem contato com o servidor. Nova tentativa em {heartbeatTimer.Interval / 1000} segundos.";
+        }
         finally
         {
             if (restoringSession) login.Enabled = true;
@@ -684,7 +698,13 @@ internal sealed class BackupForm : Form
             if (!diskSetupBusy) diskStatus.Text = "Clique em Conectar disco remoto para montar a unidade.";
             return;
         }
-        if (diskRootId is not string root || accountId is null || remoteDisk is not null) return;
+        if (diskRootId is not string root || accountId is null || remoteDisk is not null || exitRequested) return;
+        if (RemoteDiskMount.NeedsBundledDriver)
+        {
+            if (!diskSetupBusy) diskStatus.Text = "Abra o SingleDrive para instalar o driver WinFsp e montar a unidade.";
+            diskRetryAt = DateTime.UtcNow.AddSeconds(30);
+            return;
+        }
         if (DateTime.UtcNow < diskRetryAt) return;
         try
         {
@@ -701,7 +721,7 @@ internal sealed class BackupForm : Form
         catch (UnauthorizedAccessException) { throw; }
         catch (Exception ex)
         {
-            diskRetryAt = DateTime.UtcNow.AddMinutes(2);
+            ScheduleDiskRetry();
             diskStatus.Text = $"Disco remoto: {ex.Message}";
         }
     }
@@ -711,6 +731,7 @@ internal sealed class BackupForm : Form
         if (remoteDisk is not { } mount) { diskTimer.Stop(); return; }
         if (mount.Ready)
         {
+            diskRetrySeconds = 5;
             diskStatus.Text = $"SingleDrive ({mount.DriveLetter}) está disponível no Explorador.";
             SetDiskButtons();
             if (!openDiskWhenReady) return;
@@ -721,9 +742,16 @@ internal sealed class BackupForm : Form
         }
         if (mount.Running && DateTime.UtcNow - diskStartedAt < TimeSpan.FromMinutes(2)) return;
         StopRemoteDisk();
-        diskRetryAt = DateTime.UtcNow.AddMinutes(2);
-        diskStatus.Text = "Falha ao montar. Confira o WinFsp e o registro do rclone.";
+        ScheduleDiskRetry();
+        heartbeatTimer.Interval = (int)Math.Clamp((diskRetryAt - DateTime.UtcNow).TotalMilliseconds, 1_000, HeartbeatIntervalMs);
+        diskStatus.Text = "Falha ao montar. O SingleDrive tentará reconectar.";
         diskStatus.AccessibleDescription = mount.LogPath;
+    }
+
+    private void ScheduleDiskRetry()
+    {
+        diskRetryAt = DateTime.UtcNow.AddSeconds(diskRetrySeconds);
+        diskRetrySeconds = Math.Min(diskRetrySeconds * 2, 30);
     }
 
     private void StopRemoteDisk()

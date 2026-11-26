@@ -23,8 +23,7 @@ internal static class Program
             var edge = LocateEdge();
             if (edge is null)
             {
-                MessageBox.Show("Microsoft Edge não foi encontrado. Instale ou repare o Edge para abrir o SingleDrive.",
-                    "SingleDrive", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Process.Start(new ProcessStartInfo(SiteUrl) { UseShellExecute = true });
                 return;
             }
 

@@ -8,6 +8,8 @@
                   DowngradeErrorMessage="Uma versão mais recente do SingleDrive já está instalada." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="mszip" />
     <Property Id="ARPHELPLINK" Value="https://singledrive.pages.dev/" />
+    <Icon Id="SingleDriveIcon.ico" SourceFile="$(var.BrandIcon)" />
+    <Property Id="ARPPRODUCTICON" Value="SingleDriveIcon.ico" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="SingleDrive" />
@@ -18,8 +20,19 @@
     <Feature Id="SingleDriveApp" Title="SingleDrive" Level="1">
       <ComponentGroupRef Id="ApplicationFiles" />
     </Feature>
-    <ui:WixUI Id="WixUI_Minimal" />
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.BrandBanner)" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.BrandDialog)" />
     <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Abrir SingleDrive e preparar a unidade" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixUnelevatedShellExecTarget" Value="[#SingleDriveExe]" />
+    <CustomAction Id="LaunchSingleDrive" BinaryRef="Wix4UtilCA_X64"
+                  DllEntry="WixUnelevatedShellExec" Execute="immediate" Return="ignore" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchSingleDrive"
+               Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
   </Package>
 
   <Fragment>
@@ -27,10 +40,22 @@
       <Component Id="SingleDriveExecutable">
         <File Id="SingleDriveExe" Source="$(var.Payload)\SingleDrive.Desktop.exe" KeyPath="yes">
           <Shortcut Id="SingleDriveStartMenu" Directory="ProgramMenuFolder" Name="SingleDrive"
-                    WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
+                    WorkingDirectory="INSTALLFOLDER" Icon="SingleDriveIcon.ico" Advertise="yes" />
           <Shortcut Id="SingleDriveDesktop" Directory="DesktopFolder" Name="SingleDrive"
-                    WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
+                    WorkingDirectory="INSTALLFOLDER" Icon="SingleDriveIcon.ico" Advertise="yes" />
         </File>
+      </Component>
+      <Component Id="SingleDriveWindowsIntegration" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="SingleDrive" Type="string" Value="&quot;[INSTALLFOLDER]SingleDrive.Desktop.exe&quot; --background" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\singledrive-desktop"
+                       Type="string" Value="URL:SingleDrive Desktop" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\singledrive-desktop"
+                       Name="URL Protocol" Type="string" Value="" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\singledrive-desktop\DefaultIcon"
+                       Type="string" Value="&quot;[INSTALLFOLDER]SingleDrive.Desktop.exe&quot;,0" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\singledrive-desktop\shell\open\command"
+                       Type="string" Value="&quot;[INSTALLFOLDER]SingleDrive.Desktop.exe&quot; &quot;%1&quot;" />
       </Component>
       <File Source="$(var.Payload)\rclone.exe" />
       <File Source="$(var.Payload)\WinFsp.msi" />

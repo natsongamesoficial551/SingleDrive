@@ -13,8 +13,9 @@ internal sealed class RemoteDiskMount : IDisposable
     private readonly Process process;
     public string DriveLetter { get; }
     public bool Running => !process.HasExited;
-    public bool Ready => Running && Directory.Exists(DriveLetter + @"\");
+    public bool Ready => Running && DriveInfo.GetDrives().Any(drive => drive.Name.StartsWith(DriveLetter, StringComparison.OrdinalIgnoreCase));
     public string LogPath { get; }
+    public static bool NeedsBundledDriver => File.Exists(Path.Combine(AppContext.BaseDirectory, "WinFsp.msi")) && !HasWinFsp();
 
     public RemoteDiskMount(string profileId, string rootId, string key)
     {
@@ -107,8 +108,9 @@ internal sealed class RemoteDiskMount : IDisposable
         if (Convert.ToHexString(await SHA256.HashDataAsync(file)) != WinFspInstallerHash)
             throw new IOException("O instalador do WinFsp foi alterado. Reinstale o SingleDrive.");
 
-        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "msiexec.exe")) { UseShellExecute = false };
-        foreach (var argument in new[] { "/i", path, "/norestart" }) start.ArgumentList.Add(argument);
+        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "msiexec.exe"))
+            { UseShellExecute = true, Verb = "runas" };
+        foreach (var argument in new[] { "/i", path, "/passive", "/norestart" }) start.ArgumentList.Add(argument);
         using var installer = Process.Start(start) ?? throw new IOException("Não foi possível abrir a instalação do WinFsp.");
         await installer.WaitForExitAsync();
         if (installer.ExitCode is 3010 or 1641)
