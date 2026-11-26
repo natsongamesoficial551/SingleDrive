@@ -103,15 +103,15 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
       return new Response(null, { headers: { Location: 'https://www.googleapis.com/upload/drive/v3/files?upload_id=' + id } })
     }
     if (options.method === 'PUT') {
-      const chunks = []
-      for await (const chunk of options.body) chunks.push(chunk)
+      if (!options.body) return new Response(null, { status: 308 })
       assert.match(options.headers['Content-Range'], /^bytes 0-\d+\/\d+$/)
       if (failUpload) return new Response(null, { status: 503 })
       const upload = uploads.get(url.searchParams.get('upload_id'))
-      const content = Buffer.concat(chunks)
-      if (upload.currentId) Object.assign(entries.get(upload.currentId), { content, size: String(content.length) })
-      else newFile({ ...upload.metadata, mimeType: 'application/octet-stream', accountId: entries.get(upload.metadata.parents[0]).accountId }, content)
-      return new Response(null, { status: 200 })
+      const content = Buffer.from(options.body)
+      const item = upload.currentId
+        ? Object.assign(entries.get(upload.currentId), { content, size: String(content.length) })
+        : newFile({ ...upload.metadata, mimeType: 'application/octet-stream', accountId: entries.get(upload.metadata.parents[0]).accountId }, content)
+      return Response.json({ id: item.id, size: item.size })
     }
     const data = entries.get(url.pathname.split('/').at(-1)).content
     const range = options.headers.range
@@ -230,6 +230,17 @@ test('disco remoto lista, grava e controla acesso com Google Drive simulado', as
     const listing = await (await request('PROPFIND', 'Documentos/', { Depth: '1' })).text()
     assert.match(listing, /Documentos\/antigo\.txt/)
     assert.match(listing, /Documentos\/novo\.txt/)
+    const filesPath = 'devices/' + device.id + '/files'
+    const webRoot = await (await settings('web', filesPath, 'GET')).json()
+    assert.equal(webRoot.items.filter(item => item.name === 'Documentos').length, 1)
+    const webFolder = await settings('web', filesPath + '?path=documentos', 'GET')
+    assert.equal(webFolder.status, 200)
+    assert.deepEqual((await webFolder.json()).items.map(item => [item.name, item.accountId]).sort(), [
+      ['antigo.txt', accountId], ['novo.txt', secondId],
+    ])
+    assert.equal((await settings('web', filesPath + '?path=Documentos/novo.txt', 'GET')).status, 404)
+    assert.equal((await settings('web', filesPath + '?path=Documentos/..', 'GET')).status, 400)
+    assert.equal((await settings('foreign', filesPath, 'GET')).status, 404)
     assert.equal(await (await request('GET', 'Documentos/novo.txt')).text(), 'segunda conta')
     assert.equal((await request('MOVE', 'Documentos/', { Destination: '/remote-disk/dav/Documentos%202/' })).status, 201)
     assert.equal(await (await request('GET', 'Documentos%202/antigo.txt')).text(), 'editado')

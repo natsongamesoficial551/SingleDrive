@@ -131,6 +131,38 @@ remoteDiskSettingsRouter.get('/devices/:id/roots', async (req: AuthRequest, res,
   }
 })
 
+remoteDiskSettingsRouter.get('/devices/:id/files', async (req: AuthRequest, res, next) => {
+  try {
+    const id = z.string().uuid().parse(req.params.id)
+    const { path } = z.object({ path: z.string().max(64 * 256).default('') }).parse(req.query)
+    const parts = path ? path.split('/') : []
+    if (parts.length > 64 || parts.some(part => !windowsName(part))) {
+      throw new DavError(400, 'Nome ou caminho incompatível com o Windows.')
+    }
+
+    const device = await prisma.desktopDevice.findFirst({ where: { id, userId: req.user!.id } })
+    if (!device?.remoteDiskAccountId || !device.remoteDiskRootId) {
+      throw new DavError(404, 'Disco remoto não encontrado.')
+    }
+    const tree = await treeFor({ ...device, remoteDiskAccountId: device.remoteDiskAccountId, remoteDiskRootId: device.remoteDiskRootId })
+    const { item } = await tree.locate(await tree.root(), parts)
+    if (!item || item.file.mimeType !== folderMime) throw new DavError(404, 'Pasta não encontrada.')
+
+    const entries = await tree.children(item)
+    res.set('Cache-Control', 'private, no-store')
+    return res.json({ items: entries.map(({ file, copies }) => ({
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType,
+      size: file.size,
+      accountId: copies[0].mount.account.id,
+    })) })
+  } catch (error) {
+    if (error instanceof DavError) return res.status(error.status).json({ message: error.message })
+    return next(error)
+  }
+})
+
 remoteDiskSettingsRouter.post('/mount-key', async (req: AuthRequest, res, next) => {
   try {
     const key = randomBytes(32).toString('base64url')

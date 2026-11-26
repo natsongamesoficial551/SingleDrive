@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/drive/PageHeader'
 import { apiFetch } from '@/lib/api'
 import { Link, useSearchParams } from 'react-router-dom'
 import { GoogleDriveBrowser, type GoogleDriveAccount } from '@/components/drive/GoogleDriveBrowser'
+import { RemoteDiskBrowser } from '@/components/drive/RemoteDiskBrowser'
 import { RemoteDiskTransfers } from '@/components/drive/RemoteDiskTransfers'
 
 type Device = {
@@ -18,7 +19,7 @@ type Device = {
 
 type DiskRoot = { accountId: string; rootId: string }
 
-function DiskFiles({ device, accounts }: { device: Device; accounts: GoogleDriveAccount[] }) {
+function DiskFilesByAccount({ device, accounts }: { device: Device; accounts: GoogleDriveAccount[] }) {
   const [roots, setRoots] = useState<DiskRoot[]>([])
   const [selected, setSelected] = useState('')
   const [loading, setLoading] = useState(true)
@@ -50,6 +51,19 @@ function DiskFiles({ device, accounts }: { device: Device; accounts: GoogleDrive
       </select>
     </label>}
     {root && account && <GoogleDriveBrowser key={root.rootId} accounts={[account]} remoteRootId={root.rootId} />}
+  </>
+}
+
+function DiskFiles({ device, accounts }: { device: Device; accounts: GoogleDriveAccount[] }) {
+  const [byAccount, setByAccount] = useState(false)
+
+  return <>
+    {byAccount
+      ? <DiskFilesByAccount device={device} accounts={accounts} />
+      : <RemoteDiskBrowser deviceId={device.id} />}
+    <Button className="mt-3" variant="outline" size="sm" onClick={() => setByAccount(value => !value)}>
+      {byAccount ? 'Voltar à unidade SingleDrive' : 'Gerenciar arquivos por conta'}
+    </Button>
   </>
 }
 
@@ -176,9 +190,8 @@ export function ComputersPage() {
           {diskAccounts.length > 0 && device.remoteDiskRootId && <Button variant="outline" className="mt-3" onClick={() => setDiskBrowser(current => current === device.id ? null : device.id)}>
             {diskBrowser === device.id ? 'Fechar arquivos' : 'Ver arquivos do disco'}
           </Button>}
-          {diskBrowser === device.id && diskAccounts.length > 0 && device.remoteDiskRootId && (device.remoteDiskPoolEnabled
-            ? <DiskFiles device={device} accounts={diskAccounts} />
-            : <GoogleDriveBrowser key={device.remoteDiskRootId} accounts={diskAccounts} remoteRootId={device.remoteDiskRootId} />)}
+          {diskBrowser === device.id && diskAccounts.length > 0 && device.remoteDiskRootId &&
+            <DiskFiles key={`${device.remoteDiskRootId}:${device.remoteDiskPoolEnabled}`} device={device} accounts={diskAccounts} />}
           {canEdit && device.remoteDiskEnabled && device.remoteDiskRootId && <Button variant="outline" className="mt-3 ml-2"
             aria-expanded={transferDevice === device.id} onClick={() => setTransferDevice(current => current === device.id ? null : device.id)}>
             {transferDevice === device.id ? 'Ocultar transferências' : 'Salvar arquivos no disco'}
